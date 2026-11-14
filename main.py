@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Path, Query
 from pydantic import BaseModel, Field
-
+from database import get_connection
 
 app = FastAPI()
 
@@ -30,6 +30,26 @@ def home():
     return {
         "message": "Welcome to QA Practice Shop!"
     }
+
+
+@app.get("/db/products")
+def get_products_from_db():
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, name, price FROM products ORDER BY id"
+            )
+
+            products_from_db = cursor.fetchall()
+
+    return [
+        {
+            "id": product[0],
+            "name": product[1],
+            "price": product[2]
+        }
+        for product in products_from_db
+    ]
 
 @app.get("/products")
 def get_products(
