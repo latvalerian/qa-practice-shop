@@ -1,570 +1,297 @@
-
 import pytest
 from fastapi.testclient import TestClient
-from main import app, get_db
+
 from database_test import get_test_connection
+from main import app, get_db
 
-client = TestClient(app)
 
+@pytest.fixture
+def shop():
+    """Give every test a clean transaction and explicitly target the test DB."""
+    cleaner = get_test_connection()
+    database_name = cleaner.execute("SELECT current_database()").fetchone()[0]
+    assert database_name == "qa_practice_shop_test"
+    cleaner.execute(
+        "TRUNCATE TABLE products, users RESTART IDENTITY CASCADE"
+    )
+    cleaner.commit()
+    cleaner.close()
 
-@pytest.fixture(autouse=True)
-def isolate_test_database():
     connection = get_test_connection()
+    assert connection.execute("SELECT current_database()").fetchone()[0] == "qa_practice_shop_test"
     original_overrides = app.dependency_overrides.copy()
-
-    with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM products")
 
     def override_get_db():
         yield connection
 
     app.dependency_overrides[get_db] = override_get_db
-    yield connection
-    app.dependency_overrides.clear()
-    app.dependency_overrides.update(original_overrides)
-    connection.rollback()
-    connection.close()
+    client = TestClient(app)
+    try:
+        yield client, connection
+    finally:
+        connection.rollback()
+        connection.close()
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(original_overrides)
 
 
-def test_get_products_from_db(isolate_test_database):
-    with isolate_test_database.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO products (name, price) VALUES (%s, %s)",
-            ("Test database product", 25),
-        )
-
-    response = client.get("/db/products")
-
-    assert response.status_code == 200
-
-    products = response.json()
-
-    assert isinstance(products, list)
-    assert len(products) > 0
-
-    for product in products:
-        assert "id" in product
-        assert "name" in product
-        assert "price" in product
-
-        assert isinstance(product["id"], int)
-        assert isinstance(product["name"], str)
-        assert isinstance(product["price"], int)
-
-        assert product["name"].strip() != ""
-        assert product["price"] > 0
-
-
-@pytest.mark.parametrize(
-    "product_id, expected_status",
-    [
-        (999999, 404),
-        (-1, 422),
-        (0, 422)
-    ]
-)
-def test_get_nonexistent_product(product_id, expected_status):
-    response = client.get(f"/products/{product_id}")
-
-    assert response.status_code == expected_status
-
-    error_data = response.json()
-
-    if expected_status == 404:
-        assert error_data["detail"] == "Product not found"
-
-    elif expected_status == 422:
-        assert isinstance(error_data["detail"], list)
-
-        validation_error = error_data["detail"][0]
-
-        assert validation_error["type"] == "greater_than_equal"
-        assert validation_error["loc"] == ["path", "product_id"]
-        assert validation_error["ctx"]["ge"] == 1
-
-
-def test_list_products_sorted_ascending():
-    for name, price in [("Expensive", 90), ("Cheap", 10), ("Midrange", 40)]:
-        response = client.post("/products", json={"name": name, "price": price})
-        assert response.status_code == 201
-
-    response = client.get("/products")
-
-    assert response.status_code == 200
-    assert [product["price"] for product in response.json()] == [10, 40, 90]
-
-
-def test_list_products_filter_and_sort_descending():
-    for name, price in [("Expensive", 90), ("Cheap", 10), ("Midrange", 40)]:
-        response = client.post("/products", json={"name": name, "price": price})
-        assert response.status_code == 201
-
-    response = client.get("/products", params={"min_price": 40, "sort": "desc"})
-
-    assert response.status_code == 200
-    assert [product["price"] for product in response.json()] == [90, 40]
-
-
-def test_list_products_rejects_invalid_sort():
-    response = client.get("/products", params={"sort": "random"})
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Invalid sort parameter"
-
-def test_api_products_match_database(isolate_test_database):
-    create_response = client.post(
-        "/products", json={"name": "Database comparison", "price": 75}
+def register(client, email="buyer@example.com", password="correct-horse-1"):
+    response = client.post(
+        "/auth/register", json={"email": email, "password": password}
     )
-    assert create_response.status_code == 201
+    assert response.status_code == 201, response.text
+    return response.json()
 
-    response = client.get("/db/products")
 
-    assert response.status_code == 200
+def admin_token(client, connection):
+    user = register(client, "admin@example.com")
+    connection.execute("UPDATE users SET role='admin' WHERE id=%s", (user["id"],))
+    return user["access_token"]
 
-    api_products = response.json()
 
-    with isolate_test_database.cursor() as cursor:
-        cursor.execute("SELECT id, name, price FROM products ORDER BY id")
-        db_products = cursor.fetchall()
-
-    expected_products = [
-        {
-            "id": product[0],
-            "name": product[1],
-            "price": product[2]
-        }
-        for product in db_products
-    ]
-
-    assert api_products == expected_products
-
-def test_empty_products_from_test_db():
-    response = client.get("/db/products")
-
-    assert response.status_code == 200
-    assert response.json() == []
-
-def test_create_product():
-    payload = {
-        "name": "Test Monitor",
-        "price": 250
-    }
-
-    response = client.post("/products", json=payload)
-
-    assert response.status_code == 201
-
-    created_product = response.json()
-
-    assert created_product["name"] == payload["name"]
-    assert created_product["price"] == payload["price"]
-    assert isinstance(created_product["id"], int)
-
-    persisted_response = client.get(f"/products/{created_product['id']}")
-    assert persisted_response.status_code == 200
-    assert persisted_response.json() == created_product
-
-@pytest.mark.parametrize(
-    "price",
-    [
-        0,
-        -1,
-        -100
-    ]
-)
-def test_create_product_with_invalid_price(price):
-    products_before = client.get("/products").json()
-    payload = {
-        "name": "Invalid Product",
-        "price": price
-    }
-
-    response = client.post("/products", json=payload)
-
-    assert response.status_code == 422
-
-    products_after = client.get("/products").json()
-
-    assert products_before == products_after
-
-def test_create_product_without_name():
-    products_before = client.get("/products").json()
-
-    payload = {
-        "price": 100
-    }
-
-    response = client.post("/products", json=payload)
-
-    assert response.status_code == 422
-
-    products_after = client.get("/products").json()
-
-    assert products_before == products_after
-
-def test_create_product_with_null_name():
-    payload = {
-        "name": None,
-        "price": 100
-    }
-
-    response = client.post("/products", json=payload)
-
-    assert response.status_code == 422
-
-def test_create_product_with_empty_name():
-    payload = {
-        "name": "",
-        "price": 100
-    }
-
-    response = client.post("/products", json=payload)
-
-    assert response.status_code == 422
-
-def test_create_product_with_whitespace_name():
+def create_product(client, token, *, name="Widget", price=8000, stock=10):
     response = client.post(
         "/products",
-        json={"name": "   ", "price": 100}
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": name, "description": "Test item", "price_cents": price,
+              "stock_quantity": stock},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def checkout(client, token, key="order-key-0001"):
+    return client.post(
+        "/orders",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"recipient_name": "Buyer One", "recipient_phone": "+1 555 0100",
+              "shipping_address": "1 Test Street", "idempotency_key": key},
     )
 
-    assert response.status_code == 422
 
-@pytest.mark.parametrize(
-    "name",
-    ["  Keyboard", "Keyboard  ", "  Gaming Mouse  "]
-)
-def test_create_product_strips_whitespace(name):
-    response = client.post(
-        "/products",
-        json={"name": name, "price": 100}
+def test_product_catalog_is_public_and_prices_are_cents(shop):
+    client, connection = shop
+    token = admin_token(client, connection)
+    created = create_product(client, token, price=8000, stock=5)
+
+    assert created["price_cents"] == 8000
+    assert client.get("/products").json()[0]["price_cents"] == 8000
+    assert client.get(f"/products/{created['id']}").json()["stock_quantity"] == 5
+
+
+def test_product_mutations_require_admin_and_validate_input(shop):
+    client, connection = shop
+    customer = register(client)
+    denied = client.post(
+        "/products", headers={"Authorization": f"Bearer {customer['access_token']}"},
+        json={"name": "x", "price_cents": 100, "stock_quantity": 1},
     )
+    assert denied.status_code == 403
+    client.cookies.clear()
+    assert client.post("/products", json={"name": "x", "price_cents": 100}).status_code == 401
 
-    assert response.status_code == 201
-    assert response.json()["name"] == name.strip()
-
-def test_create_product_preserves_internal_spaces():
-    response = client.post(
-        "/products",
-        json={"name": "Gaming Mouse", "price": 100}
+    token = admin_token(client, connection)
+    invalid = client.post(
+        "/products", headers={"Authorization": f"Bearer {token}"},
+        json={"name": "   ", "price_cents": 0},
     )
+    assert invalid.status_code == 422
 
-    assert response.status_code == 201
-    assert response.json()["name"] == "Gaming Mouse"
 
-def test_patch_product_updates_only_price():
-    create_response = client.post(
-        "/products",
-        json={"name": "Patch Test Product", "price": 100}
+def test_auth_login_logout_and_duplicate_registration(shop):
+    client, _ = shop
+    user = register(client, "Case@Example.com")
+    assert client.post(
+        "/auth/register", json={"email": "case@example.com", "password": "correct-horse-1"}
+    ).status_code == 409
+    login = client.post(
+        "/auth/login", json={"email": "CASE@example.com", "password": "correct-horse-1"}
     )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["id"] == user["id"]
+    assert client.post(
+        "/auth/login", json={"email": "case@example.com", "password": "wrong-password"}
+    ).status_code == 401
+    assert client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"}).status_code == 204
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
-    product_id = create_response.json()["id"]
 
-    response = client.patch(
-        f"/products/{product_id}",
-        json={"price": 200}
+def test_guest_cart_persists_merges_on_registration_and_has_quantity_limit(shop):
+    client, connection = shop
+    token = admin_token(client, connection)
+    product = create_product(client, token)
+    guest = TestClient(app)
+    added = guest.post("/cart/items", json={"product_id": product["id"], "quantity": 2})
+    assert added.status_code == 201
+    assert added.json()["total_cents"] == 16000
+
+    user = register(guest, "merge@example.com")
+    cart = guest.get("/cart", headers={"Authorization": f"Bearer {user['access_token']}"})
+    assert cart.json()["items"][0]["quantity"] == 2
+    assert "shop_guest" not in guest.cookies
+
+    too_many = guest.post(
+        "/cart/items", headers={"Authorization": f"Bearer {user['access_token']}"},
+        json={"product_id": product["id"], "quantity": 999},
     )
+    assert too_many.status_code == 409
+    assert guest.put(
+        f"/cart/items/{product['id']}",
+        headers={"Authorization": f"Bearer {user['access_token']}"},
+        json={"quantity": 1001},
+    ).status_code == 422
 
-    assert response.status_code == 200
-    assert response.json()["name"] == "Patch Test Product"
-    assert response.json()["price"] == 200
 
-def test_patch_product_updates_only_name():
-    create_response = client.post(
-        "/products",
-        json={"name": "Old Product Name", "price": 100}
+def test_guest_merge_rejects_combined_quantity_over_limit(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin)
+    buyer = register(client, "existing@example.com")
+    user_headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    assert client.post("/cart/items", headers=user_headers,
+                       json={"product_id": product["id"], "quantity": 600}).status_code == 201
+
+    guest = TestClient(app)
+    # Keep the test database dependency override in effect for the second client.
+    guest.cookies.set("shop_guest", "guest-token-for-merge-test")
+    assert guest.post("/cart/items", json={"product_id": product["id"], "quantity": 500}).status_code == 201
+    merged = guest.post(
+        "/auth/login", json={"email": "existing@example.com", "password": "correct-horse-1"}
     )
+    assert merged.status_code == 409
 
-    product_id = create_response.json()["id"]
 
-    response = client.patch(
-        f"/products/{product_id}",
-        json={"name": "New Product Name"}
+def test_checkout_requires_login_and_cart_item(shop):
+    client, connection = shop
+    assert checkout(client, "unused-token").status_code == 401
+    token = register(client)["access_token"]
+    assert checkout(client, token).status_code == 400
+
+
+def test_checkout_snapshots_total_clears_cart_and_is_idempotent(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, name="Snapshot Widget", price=8000, stock=8)
+    buyer = register(client, "snapshot@example.com")
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    assert client.post("/cart/items", headers=headers,
+                       json={"product_id": product["id"], "quantity": 2}).status_code == 201
+
+    created = checkout(client, buyer["access_token"])
+    assert created.status_code == 201, created.text
+    order = created.json()
+    assert order["total_cents"] == 16000
+    assert order["currency"] == "USD"
+    assert order["status"] == "PENDING_PAYMENT"
+    assert client.get("/cart", headers=headers).json()["items"] == []
+
+    changed = client.put(
+        f"/products/{product['id']}", headers={"Authorization": f"Bearer {admin}"},
+        json={"name": "Renamed", "description": "Changed", "price_cents": 12000,
+              "stock_quantity": 8, "is_active": True},
     )
+    assert changed.status_code == 200
+    detail = client.get(f"/orders/{order['id']}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["items"] == [
+        {"product_name": "Snapshot Widget", "unit_price_cents": 8000,
+         "quantity": 2, "line_total_cents": 16000}
+    ]
 
-    assert response.status_code == 200
-    assert response.json()["name"] == "New Product Name"
-    assert response.json()["price"] == 100
+    retry = checkout(client, buyer["access_token"])
+    assert retry.status_code == 201
+    assert retry.json()["id"] == order["id"]
 
-def test_patch_product_with_empty_body():
-    create_response = client.post(
-        "/products",
-        json={"name": "Patch Test Product", "price": 100}
+
+def test_checkout_reserves_stock_and_cancellation_releases_it(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=3)
+    buyer = register(client, "reserve@example.com")
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    assert client.post("/cart/items", headers=headers,
+                       json={"product_id": product["id"], "quantity": 2}).status_code == 201
+    order = checkout(client, buyer["access_token"]).json()
+    assert client.get(f"/products/{product['id']}").json()["stock_quantity"] == 1
+
+    other = register(client, "other@example.com")
+    other_headers = {"Authorization": f"Bearer {other['access_token']}"}
+    assert client.post("/cart/items", headers=other_headers,
+                       json={"product_id": product["id"], "quantity": 2}).status_code == 201
+    assert checkout(client, other["access_token"], "order-key-0002").status_code == 409
+
+    cancelled = client.post(f"/orders/{order['id']}/cancel", headers=headers)
+    assert cancelled.status_code == 200
+    assert client.get(f"/products/{product['id']}").json()["stock_quantity"] == 3
+
+
+def test_expired_reservation_returns_to_available_stock(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=4)
+    buyer = register(client, "expiry@example.com")
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    client.post("/cart/items", headers=headers,
+                json={"product_id": product["id"], "quantity": 3})
+    order = checkout(client, buyer["access_token"]).json()
+    connection.execute(
+        "UPDATE stock_reservations SET expires_at=NOW()-INTERVAL '1 second' WHERE order_item_id IN (SELECT id FROM order_items WHERE order_id=%s)",
+        (order["id"],),
     )
-
-    product_id = create_response.json()["id"]
-
-    response = client.patch(
-        f"/products/{product_id}",
-        json={}
+    connection.execute(
+        "UPDATE orders SET reservation_expires_at=NOW()-INTERVAL '1 second' WHERE id=%s",
+        (order["id"],),
     )
+    assert client.get(f"/products/{product['id']}").json()["stock_quantity"] == 4
+    assert client.get(f"/orders/{order['id']}", headers=headers).json()["status"] == "EXPIRED"
 
-    assert response.status_code == 422
 
-    check_response = client.get(f"/products/{product_id}")
+def test_cart_and_order_are_private_to_their_owner(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin)
+    buyer = register(client, "owner@example.com")
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    client.post("/cart/items", headers=headers,
+                json={"product_id": product["id"], "quantity": 1})
+    order = checkout(client, buyer["access_token"]).json()
 
-    assert check_response.status_code == 200
-    assert check_response.json()["name"] == "Patch Test Product"
-    assert check_response.json()["price"] == 100
+    stranger = register(client, "stranger@example.com")
+    stranger_headers = {"Authorization": f"Bearer {stranger['access_token']}"}
+    assert client.get(f"/orders/{order['id']}", headers=stranger_headers).status_code == 404
+    assert client.post(f"/orders/{order['id']}/cancel", headers=stranger_headers).status_code == 409
 
-def test_patch_product_with_null_name():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Name", "price": 100}
+
+def test_admin_user_management_requires_admin(shop):
+    client, connection = shop
+    buyer = register(client)
+    buyer_headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    assert client.get("/admin/users", headers=buyer_headers).status_code == 403
+
+    admin = admin_token(client, connection)
+    admin_headers = {"Authorization": f"Bearer {admin}"}
+    users = client.get("/admin/users", headers=admin_headers)
+    assert users.status_code == 200
+    changed = client.patch(
+        f"/admin/users/{buyer['id']}", headers=admin_headers,
+        json={"is_active": False},
     )
+    assert changed.status_code == 200
+    assert changed.json()["is_active"] is False
 
-    product_id = create_response.json()["id"]
 
-    response = client.patch(
-        f"/products/{product_id}",
-        json={"name": None}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Name"
-    assert check_response.json()["price"] == 100
-
-def test_patch_product_with_null_price():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Name", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.patch(
-        f"/products/{product_id}",
-        json={"price": None}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Name"
-    assert check_response.json()["price"] == 100
-
-@pytest.mark.parametrize("price", [0, -1, -100])
-def test_patch_product_with_invalid_price(price):
-    create_response = client.post(
-        "/products",
-        json={"name": "Price Test Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.patch(
-        f"/products/{product_id}",
-        json={"price": price}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["price"] == 100
-
-def test_put_product_updates_all_fields():
-    create_response = client.post(
-        "/products",
-        json={"name": "Old Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
+def test_admin_cannot_set_stock_below_active_reservations(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=5)
+    buyer = register(client, "held@example.com")
+    client.post("/cart/items", headers={"Authorization": f"Bearer {buyer['access_token']}"},
+                json={"product_id": product['id'], "quantity": 3})
+    checkout(client, buyer["access_token"])
     response = client.put(
-        f"/products/{product_id}",
-        json={"name": "New Product", "price": 200}
+        f"/products/{product['id']}", headers={"Authorization": f"Bearer {admin}"},
+        json={"name": "Widget", "description": "Test item", "price_cents": 8000,
+              "stock_quantity": 2, "is_active": True},
     )
-
-    assert response.status_code == 200
-    assert response.json()["name"] == "New Product"
-    assert response.json()["price"] == 200
-
-def test_put_product_without_name():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"price": 200}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-def test_put_product_without_price():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": "Updated Product"}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-def test_put_product_with_null_name():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": None, "price": 200}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-def test_put_product_with_null_price():
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": "Updated Product", "price": None}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-@pytest.mark.parametrize("price", [0, -1, -100])
-def test_put_product_with_invalid_price(price):
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": "Updated Product", "price": price}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-@pytest.mark.parametrize("name", ["", "   "])
-def test_put_product_with_invalid_name(name):
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": name, "price": 200}
-    )
-
-    assert response.status_code == 422
-
-    check_response = client.get(f"/products/{product_id}")
-
-    assert check_response.json()["name"] == "Original Product"
-    assert check_response.json()["price"] == 100
-
-@pytest.mark.parametrize(
-    "name",
-    ["  Keyboard", "Keyboard  ", "  Gaming Mouse  "]
-)
-def test_put_product_strips_whitespace(name):
-    create_response = client.post(
-        "/products",
-        json={"name": "Original Product", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.put(
-        f"/products/{product_id}",
-        json={"name": name, "price": 200}
-    )
-
-    assert response.status_code == 200
-    assert response.json()["name"] == name.strip()
-    assert response.json()["price"] == 200
-
-def test_delete_product():
-    create_response = client.post(
-        "/products",
-        json={"name": "Product To Delete", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    response = client.delete(f"/products/{product_id}")
-
-    assert response.status_code == 200
-    assert response.json()["detail"] == "Product deleted successfully"
-
-    check_response = client.get(f"/products/{product_id}")
-    assert check_response.status_code == 404
-
-def test_delete_product_twice():
-    create_response = client.post(
-        "/products",
-        json={"name": "Product To Delete", "price": 100}
-    )
-
-    product_id = create_response.json()["id"]
-
-    first_response = client.delete(f"/products/{product_id}")
-    second_response = client.delete(f"/products/{product_id}")
-
-    assert first_response.status_code == 200
-    assert second_response.status_code == 404
-
-def test_delete_nonexistent_product():
-    response = client.delete("/products/999999")
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Product not found"
-
-@pytest.mark.parametrize("product_id", [0, -1])
-def test_delete_product_with_invalid_id(product_id):
-    response = client.delete(f"/products/{product_id}")
-
-    assert response.status_code == 422
+    assert response.status_code == 409
