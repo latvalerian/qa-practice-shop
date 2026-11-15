@@ -247,29 +247,142 @@ def get_cart(request:Request,response:Response,authorization:str|None=Header(def
     _reconcile_expired(db)
     user,gh=_identity(request,response,authorization,db); cid=_cart(db,user,gh)
     return _cart_payload(db,cid)
-@router.post('/cart/items',status_code=201)
-def add_cart_item(body:CartAdd,request:Request,response:Response,authorization:str|None=Header(default=None),db=Depends(get_db)):
-    user,gh=_identity(request,response,authorization,db); cid=_cart(db,user,gh)
-    with db.cursor() as cur:
-        cur.execute('SELECT id FROM carts WHERE id=%s FOR UPDATE', (cid,))
-        cur.execute('SELECT id FROM products WHERE id=%s AND is_active',(body.product_id,))
-        if not cur.fetchone(): raise HTTPException(404,'Product not found')
-        cur.execute('SELECT quantity FROM cart_items WHERE cart_id=%s AND product_id=%s FOR UPDATE', (cid,body.product_id))
-        existing=cur.fetchone()
-        if existing and existing[0]+body.quantity>1000: raise HTTPException(409,'Cart item quantity cannot exceed 1000')
-        cur.execute('INSERT INTO cart_items(cart_id,product_id,quantity) VALUES (%s,%s,%s) ON CONFLICT(cart_id,product_id) DO UPDATE SET quantity=cart_items.quantity+EXCLUDED.quantity,updated_at=NOW()', (cid,body.product_id,body.quantity))
-    return _cart_payload(db,cid)
+@router.post('/cart/items', status_code=201)
+def add_cart_item(
+    body: CartAdd,
+    request: Request,
+    response: Response,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db)
+):
+    user, gh = _identity(request, response, authorization, db)
+    cid = _cart(db, user, gh)
 
+    with db.cursor() as cur:
+        cur.execute(
+            'SELECT id FROM carts WHERE id=%s FOR UPDATE',
+            (cid,)
+        )
+
+        cur.execute(
+            'SELECT stock_quantity FROM products '
+            'WHERE id=%s AND is_active FOR UPDATE',
+            (body.product_id,)
+        )
+        product = cur.fetchone()
+
+        if not product:
+            raise HTTPException(404, 'Product not found')
+
+        stock_quantity = product[0]
+
+        cur.execute(
+            '''SELECT COALESCE(SUM(quantity), 0)
+               FROM stock_reservations
+               WHERE product_id=%s
+                 AND released_at IS NULL
+                 AND expires_at > NOW()''',
+            (body.product_id,)
+        )
+        reserved_quantity = cur.fetchone()[0]
+
+        cur.execute(
+            'SELECT quantity FROM cart_items '
+            'WHERE cart_id=%s AND product_id=%s FOR UPDATE',
+            (cid, body.product_id)
+        )
+        existing = cur.fetchone()
+
+        current_quantity = existing[0] if existing else 0
+        new_quantity = current_quantity + body.quantity
+
+        available_quantity = stock_quantity - reserved_quantity
+
+        if new_quantity > available_quantity:
+            raise HTTPException(
+                409,
+                'Insufficient available stock'
+            )
+
+        if new_quantity > 1000:
+            raise HTTPException(
+                409,
+                'Cart item quantity cannot exceed 1000'
+            )
+
+        cur.execute(
+            '''INSERT INTO cart_items(cart_id, product_id, quantity)
+               VALUES (%s, %s, %s)
+               ON CONFLICT(cart_id, product_id)
+               DO UPDATE SET
+                   quantity = cart_items.quantity + EXCLUDED.quantity,
+                   updated_at = NOW()''',
+            (cid, body.product_id, body.quantity)
+        )
+
+    return _cart_payload(db, cid)
 
 @router.put('/cart/items/{product_id}')
-def set_cart_item(product_id:int,body:QuantitySet,request:Request,response:Response,authorization:str|None=Header(default=None),db=Depends(get_db)):
-    user,gh=_identity(request,response,authorization,db); cid=_cart(db,user,gh)
+def set_cart_item(
+    product_id: int,
+    body: QuantitySet,
+    request: Request,
+    response: Response,
+    authorization: str | None = Header(default=None),
+    db=Depends(get_db)
+):
+    user, gh = _identity(request, response, authorization, db)
+    cid = _cart(db, user, gh)
+
     with db.cursor() as cur:
-        cur.execute('SELECT id FROM carts WHERE id=%s FOR UPDATE', (cid,))
-        cur.execute('UPDATE cart_items SET quantity=%s,updated_at=NOW() WHERE cart_id=%s AND product_id=%s RETURNING product_id',(body.quantity,cid,product_id))
-        r=cur.fetchone()
-    if not r: raise HTTPException(404,'Cart item not found')
-    return _cart_payload(db,cid)
+        cur.execute(
+            'SELECT id FROM carts WHERE id=%s FOR UPDATE',
+            (cid,)
+        )
+
+        cur.execute(
+            'SELECT stock_quantity FROM products '
+            'WHERE id=%s AND is_active FOR UPDATE',
+            (product_id,)
+        )
+        product = cur.fetchone()
+
+        if not product:
+            raise HTTPException(404, 'Product not found')
+
+        stock_quantity = product[0]
+
+        cur.execute(
+            '''SELECT COALESCE(SUM(quantity), 0)
+               FROM stock_reservations
+               WHERE product_id=%s
+                 AND released_at IS NULL
+                 AND expires_at > NOW()''',
+            (product_id,)
+        )
+        reserved_quantity = cur.fetchone()[0]
+
+        available_quantity = stock_quantity - reserved_quantity
+
+        if body.quantity > available_quantity:
+            raise HTTPException(
+                409,
+                'Insufficient available stock'
+            )
+
+        cur.execute(
+            '''UPDATE cart_items
+               SET quantity=%s, updated_at=NOW()
+               WHERE cart_id=%s AND product_id=%s
+               RETURNING product_id''',
+            (body.quantity, cid, product_id)
+        )
+        result = cur.fetchone()
+
+    if not result:
+        raise HTTPException(404, 'Cart item not found')
+
+    return _cart_payload(db, cid)
 
 
 @router.delete('/cart/items/{product_id}',status_code=204)

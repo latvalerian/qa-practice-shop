@@ -1,3 +1,6 @@
+from urllib import response
+from xmlrpc import client
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -146,7 +149,7 @@ def test_guest_cart_persists_merges_on_registration_and_has_quantity_limit(shop)
 def test_guest_merge_rejects_combined_quantity_over_limit(shop):
     client, connection = shop
     admin = admin_token(client, connection)
-    product = create_product(client, admin)
+    product = create_product(client, admin, stock=1000)
     buyer = register(client, "existing@example.com")
     user_headers = {"Authorization": f"Bearer {buyer['access_token']}"}
     assert client.post("/cart/items", headers=user_headers,
@@ -217,9 +220,11 @@ def test_checkout_reserves_stock_and_cancellation_releases_it(shop):
 
     other = register(client, "other@example.com")
     other_headers = {"Authorization": f"Bearer {other['access_token']}"}
-    assert client.post("/cart/items", headers=other_headers,
-                       json={"product_id": product["id"], "quantity": 2}).status_code == 201
-    assert checkout(client, other["access_token"], "order-key-0002").status_code == 409
+    assert client.post(
+    "/cart/items",
+    headers=other_headers,
+    json={"product_id": product["id"], "quantity": 2}
+).status_code == 409
 
     cancelled = client.post(f"/orders/{order['id']}/cancel", headers=headers)
     assert cancelled.status_code == 200
@@ -295,3 +300,132 @@ def test_admin_cannot_set_stock_below_active_reservations(shop):
               "stock_quantity": 2, "is_active": True},
     )
     assert response.status_code == 409
+
+def test_checkout_rejects_stock_reserved_by_another_buyer(shop):
+    client, connection = shop
+
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=5)
+
+    buyer_a = register(client, "buyer_a@example.com")
+    buyer_b = register(client, "buyer_b@example.com")
+
+    headers_a = {
+        "Authorization": f"Bearer {buyer_a['access_token']}"
+    }
+    headers_b = {
+        "Authorization": f"Bearer {buyer_b['access_token']}"
+    }
+
+    # Client A adds item to cart
+    added = client.post(
+        "/cart/items",
+        headers=headers_a,
+        json={"product_id": product["id"], "quantity": 5}
+    )
+    assert added.status_code == 201
+
+    # Client B adds item to cart and checks out
+    added = client.post(
+        "/cart/items",
+        headers=headers_b,
+        json={"product_id": product["id"], "quantity": 5}
+    )
+    assert added.status_code == 201
+
+    order = checkout(client, buyer_b["access_token"], "buyer-b-order")
+    assert order.status_code == 201
+
+    # Client A tries to check out
+    order = checkout(client, buyer_a["access_token"], "buyer-a-order")
+
+    assert order.status_code == 409
+    assert order.json()["detail"] == "Insufficient available stock"
+
+
+def test_put_cart_item_updates_quantity_within_stock(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=10)
+    buyer = register(client, "buyer@example.com")
+
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    # Add item to cart
+    added = client.post(
+        "/cart/items",
+        headers=headers,
+        json={"product_id": product["id"], "quantity": 3}
+    )
+    assert added.status_code == 201
+
+    # Update cart item quantity
+    updated = client.put(
+        f"/cart/items/{product['id']}",
+        headers=headers,
+        json={"quantity": 7}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["items"][0]["quantity"] == 7
+
+def test_put_cart_item_rejects_quantity_exceeding_stock(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=5)
+    buyer = register(client, "buyer@example.com")
+
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    # Add item to cart
+    added = client.post(
+        "/cart/items",
+        headers=headers,
+        json={"product_id": product["id"], "quantity": 3}
+    )
+    assert added.status_code == 201
+
+    # Try to update cart item quantity beyond stock
+    updated = client.put(
+        f"/cart/items/{product['id']}",
+        headers=headers,
+        json={"quantity": 11}
+    )
+    assert added.status_code == 201
+    assert updated.status_code == 409
+    assert updated.json()["detail"] == "Insufficient available stock"
+
+    cart = client.get("/cart", headers=headers)
+    assert cart.status_code == 200
+    assert cart.json()["items"][0]["quantity"] == 3
+
+def test_cart_rejects_checkout_when_product_is_deactivated(shop):
+    client, connection = shop
+    admin = admin_token(client, connection)
+    product = create_product(client, admin, stock=5)
+    buyer = register(client, "buyer@example.com")
+
+    headers = {"Authorization": f"Bearer {buyer['access_token']}"}
+    # Add item to cart
+    added = client.post(
+        "/cart/items",
+        headers=headers,
+        json={"product_id": product["id"], "quantity": 3}
+    )
+    assert added.status_code == 201
+
+    # Deactivate the product
+    response = client.put(
+    f"/products/{product['id']}",
+    headers={"Authorization": f"Bearer {admin}"},
+    json={
+        "name": product["name"],
+        "description": product["description"],
+        "price_cents": product["price_cents"],
+        "stock_quantity": 10,
+        "is_active": False
+    }
+)
+    # Try to checkout
+    order = checkout(client, buyer["access_token"], "order-key-deactivated")
+    assert order.status_code == 409
+    assert order.json()["detail"] == "Cart contains an unavailable product; remove it before checkout"
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
