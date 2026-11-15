@@ -241,6 +241,31 @@ def _cart_payload(db, cart_id):
     items=[dict(product_id=r[0],name=r[1],unit_price_cents=r[2],quantity=r[3],image_url=r[4],line_total_cents=r[2]*r[3]) for r in rows]
     return {'items':items,'total_cents':sum(x['line_total_cents'] for x in items),'currency':'USD'}
 
+def _get_available_stock(cur, product_id):
+    cur.execute(
+        'SELECT stock_quantity FROM products '
+        'WHERE id=%s AND is_active FOR UPDATE',
+        (product_id,)
+    )
+    product = cur.fetchone()
+
+    if not product:
+        raise HTTPException(404, 'Product not found')
+
+    stock_quantity = product[0]
+
+    cur.execute(
+        '''SELECT COALESCE(SUM(quantity), 0)
+           FROM stock_reservations
+           WHERE product_id=%s
+             AND released_at IS NULL
+             AND expires_at > NOW()''',
+        (product_id,)
+    )
+    reserved_quantity = cur.fetchone()[0]
+
+    return stock_quantity - reserved_quantity
+
 
 @router.get('/cart')
 def get_cart(request:Request,response:Response,authorization:str|None=Header(default=None),db=Depends(get_db)):
@@ -264,27 +289,7 @@ def add_cart_item(
             (cid,)
         )
 
-        cur.execute(
-            'SELECT stock_quantity FROM products '
-            'WHERE id=%s AND is_active FOR UPDATE',
-            (body.product_id,)
-        )
-        product = cur.fetchone()
-
-        if not product:
-            raise HTTPException(404, 'Product not found')
-
-        stock_quantity = product[0]
-
-        cur.execute(
-            '''SELECT COALESCE(SUM(quantity), 0)
-               FROM stock_reservations
-               WHERE product_id=%s
-                 AND released_at IS NULL
-                 AND expires_at > NOW()''',
-            (body.product_id,)
-        )
-        reserved_quantity = cur.fetchone()[0]
+        available_quantity = _get_available_stock(cur, body.product_id)
 
         cur.execute(
             'SELECT quantity FROM cart_items '
@@ -295,8 +300,6 @@ def add_cart_item(
 
         current_quantity = existing[0] if existing else 0
         new_quantity = current_quantity + body.quantity
-
-        available_quantity = stock_quantity - reserved_quantity
 
         if new_quantity > available_quantity:
             raise HTTPException(
@@ -340,29 +343,7 @@ def set_cart_item(
             (cid,)
         )
 
-        cur.execute(
-            'SELECT stock_quantity FROM products '
-            'WHERE id=%s AND is_active FOR UPDATE',
-            (product_id,)
-        )
-        product = cur.fetchone()
-
-        if not product:
-            raise HTTPException(404, 'Product not found')
-
-        stock_quantity = product[0]
-
-        cur.execute(
-            '''SELECT COALESCE(SUM(quantity), 0)
-               FROM stock_reservations
-               WHERE product_id=%s
-                 AND released_at IS NULL
-                 AND expires_at > NOW()''',
-            (product_id,)
-        )
-        reserved_quantity = cur.fetchone()[0]
-
-        available_quantity = stock_quantity - reserved_quantity
+        available_quantity = _get_available_stock(cur, product_id)
 
         if body.quantity > available_quantity:
             raise HTTPException(

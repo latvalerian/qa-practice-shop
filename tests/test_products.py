@@ -1,5 +1,6 @@
-from urllib import response
-from xmlrpc import client
+
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -429,3 +430,209 @@ def test_cart_rejects_checkout_when_product_is_deactivated(shop):
     assert order.json()["detail"] == "Cart contains an unavailable product; remove it before checkout"
     assert response.status_code == 200
     assert response.json()["is_active"] is False
+
+@pytest.fixture
+def concurrent_shop():
+    connection = get_test_connection()
+
+    assert connection.execute(
+        "SELECT current_database()"
+    ).fetchone()[0] == "qa_practice_shop_test"
+
+    connection.execute(
+        "TRUNCATE TABLE products, users RESTART IDENTITY CASCADE"
+    )
+    connection.commit()
+
+    original_overrides = app.dependency_overrides.copy()
+
+    def override_get_db():
+        with get_test_connection() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    client = TestClient(app)
+
+    try:
+        yield client, connection
+    finally:
+        connection.close()
+
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(original_overrides)
+
+        cleaner = get_test_connection()
+        try:
+            cleaner.execute(
+                "TRUNCATE TABLE products, users RESTART IDENTITY CASCADE"
+            )
+            cleaner.commit()
+        finally:
+            cleaner.close()
+
+def test_concurrent_cart_additions_do_not_exceed_stock(concurrent_shop):
+    client, connection = concurrent_shop
+
+    buyer = register(client, "concurrent@example.com")
+    admin = register(client, "concurrent_admin@example.com")
+
+    connection.execute(
+        "UPDATE users SET role='admin' WHERE id=%s",
+        (admin["id"],)
+    )
+    connection.commit()
+
+    product = create_product(
+        client,
+        admin["access_token"],
+        stock=1
+    )
+
+    headers = {
+        "Authorization": f"Bearer {buyer['access_token']}"
+    }
+
+    barrier = Barrier(2)
+
+    def add_to_cart():
+        with TestClient(app) as concurrent_client:
+            barrier.wait()
+
+            return concurrent_client.post(
+                "/cart/items",
+                headers=headers,
+                json={
+                    "product_id": product["id"],
+                    "quantity": 1
+                }
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_1 = executor.submit(add_to_cart)
+        future_2 = executor.submit(add_to_cart)
+
+        response_1 = future_1.result()
+        response_2 = future_2.result()
+
+    statuses = sorted([
+        response_1.status_code,
+        response_2.status_code
+    ])
+
+    assert statuses == [201, 409]
+
+    cart = client.get("/cart", headers=headers)
+
+    assert cart.status_code == 200
+
+    items = cart.json()["items"]
+
+    assert len(items) == 1
+    assert items[0]["quantity"] == 1
+
+def test_concurrent_checkouts_do_not_oversell_stock(concurrent_shop):
+    client, connection = concurrent_shop
+
+    buyer_a = register(client, "buyer_a@example.com")
+    buyer_b = register(client, "buyer_b@example.com")
+    admin = register(client, "concurrent_admin@example.com")
+
+    connection.execute(
+        "UPDATE users SET role='admin' WHERE id=%s",
+        (admin["id"],)
+    )
+    connection.commit()
+
+    product = create_product(
+        client,
+        admin["access_token"],
+        stock=1
+    )
+
+    headers_a = {
+        "Authorization": f"Bearer {buyer_a['access_token']}"
+    }
+
+    headers_b = {
+        "Authorization": f"Bearer {buyer_b['access_token']}"
+    }
+
+    # Both buyers add the same product to their carts
+    cart_a = client.post(
+        "/cart/items",
+        headers=headers_a,
+        json={
+            "product_id": product["id"],
+            "quantity": 1
+        }
+    )
+
+    cart_b = client.post(
+        "/cart/items",
+        headers=headers_b,
+        json={
+            "product_id": product["id"],
+            "quantity": 1
+        }
+    )
+
+    assert cart_a.status_code == 201
+    assert cart_b.status_code == 201
+
+    barrier = Barrier(2)
+
+    def place_order(token, idempotency_key):
+        with TestClient(app) as concurrent_client:
+            barrier.wait()
+
+            return checkout(
+                concurrent_client,
+                token,
+                key=idempotency_key
+            )
+
+    # Both buyers place orders concurrently.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_a = executor.submit(
+            place_order,
+            buyer_a["access_token"],
+            "concurrent-order-a"
+        )
+
+        future_b = executor.submit(
+            place_order,
+            buyer_b["access_token"],
+            "concurrent-order-b"
+        )
+
+        response_a = future_a.result()
+        response_b = future_b.result()
+
+    statuses = sorted([
+        response_a.status_code,
+        response_b.status_code
+    ])
+
+    assert statuses == [201, 409]
+
+    # Check the number of created orders.
+    order_count = connection.execute(
+        "SELECT COUNT(*) FROM orders WHERE status='PENDING_PAYMENT'"
+    ).fetchone()[0]
+
+    assert order_count == 1
+
+    # Check the number of active product reservations.
+    reserved_quantity = connection.execute(
+        """
+        SELECT COALESCE(SUM(quantity), 0)
+        FROM stock_reservations
+        WHERE product_id=%s
+          AND released_at IS NULL
+          AND expires_at > NOW()
+        """,
+        (product["id"],)
+    ).fetchone()[0]
+
+    assert reserved_quantity == 1
