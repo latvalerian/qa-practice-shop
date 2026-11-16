@@ -1,30 +1,260 @@
 
+/* ========================================
+   GLOBAL APP LAYOUT
+======================================== */
+
 .app {
   min-height: 100vh;
+  background: #ffffff;
 }
 
+* {
+  box-sizing: border-box;
+}
+
+/* ========================================
+   HEADER
+======================================== */
+
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 40px;
+  position: relative;
+  z-index: 50;
+  width: 100%;
+  background: #ffffff;
   border-bottom: 1px solid #e5e5e5;
 }
 
-.header h1 {
-  margin: 0;
-  font-size: 24px;
+.header-inner {
+  position: relative;
+  display: grid;
+  grid-template-columns: 220px minmax(300px, 600px) 1fr;
+  align-items: center;
+  gap: 40px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 18px 40px;
+  overflow: visible;
 }
 
-.header nav {
+/* Logo */
+
+.logo {
+  color: #222222;
+  font-size: 23px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.logo span {
+  color: #2563eb;
+}
+
+/* ========================================
+   SEARCH BAR
+======================================== */
+
+.header-search {
+  position: relative;
+  z-index: 100;
   display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 64px;
+  padding: 0 24px;
+  background: #f1f0f0;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  cursor: text;
+  transition:
+    background 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.header-search.focused {
+  background: #ffffff;
+  border-color: #bdbdbd;
+}
+
+/* Search icon */
+
+.search-icon {
+  flex-shrink: 0;
+  color: #777777;
+  font-size: 27px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Static search label */
+
+.search-label {
+  flex-shrink: 0;
+  color: #222222;
+  font-size: 17px;
+  white-space: nowrap;
+  cursor: text;
+  pointer-events: none;
+  user-select: none;
+  transition:
+    opacity 0.2s ease,
+    width 0.2s ease;
+}
+
+.header-search.focused .search-label {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+/* Search input */
+
+.search-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.search-field input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #222222;
+  font-family: inherit;
+  font-size: 17px;
+}
+
+.search-field input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+/* ========================================
+   ROTATING SEARCH SUGGESTIONS
+======================================== */
+
+.suggestion-window {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #aaaaaa;
+  font-size: 17px;
+  pointer-events: none;
+}
+
+.suggestion-track {
+  height: 100%;
+  transition: transform 0.45s ease;
+  will-change: transform;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  white-space: nowrap;
+}
+
+/* ========================================
+   FILTER BUTTON
+======================================== */
+
+.search-filter {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #222222;
+  font-size: 26px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.search-filter:hover {
+  background: #e8e8e8;
+}
+
+/* ========================================
+   POPULAR SEARCH DROPDOWN
+======================================== */
+
+.search-dropdown {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  padding: 22px 26px;
+  background: #ffffff;
+  border: 1px solid #eeeeee;
+  border-radius: 24px;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.12);
+}
+
+.dropdown-title {
+  margin: 0 0 12px;
+  color: #888888;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.popular-search-item {
+  display: block;
+  width: 100%;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  color: #222222;
+  text-align: left;
+  font-family: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.popular-search-item:hover {
+  color: #2563eb;
+}
+
+/* ========================================
+   HEADER NAVIGATION
+======================================== */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 24px;
 }
 
-.header a {
-  color: #333;
+.header-actions a {
+  color: #333333;
+  font-size: 13px;
   text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.2s ease;
 }
+
+.header-actions a:hover {
+  color: #2563eb;
+}
+
+/* ========================================
+   MAIN CONTENT
+======================================== */
 
 .main {
   max-width: 1200px;
@@ -32,57 +262,218 @@
   padding: 0 24px;
 }
 
+.main h2 {
+  margin: 0;
+  color: #222222;
+  font-size: 25px;
+  font-weight: 700;
+}
+
+/* ========================================
+   PRODUCT GRID
+======================================== */
+
 .products {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(240px, 1fr)
+  );
   gap: 24px;
   margin-top: 24px;
 }
 
+/* ========================================
+   PRODUCT CARD
+======================================== */
+
 .product {
   padding: 20px;
   border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  background-color: #ffffff;
+  border-radius: 12px;
+  background: #ffffff;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.product:hover {
+  transform: translateY(-3px);
+  border-color: #d5d5d5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
 }
 
 .product h3 {
-  margin-top: 0;
-  margin-bottom: 12px;
+  margin: 0 0 12px;
+  color: #222222;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .product p {
   margin: 8px 0;
   color: #555555;
+  font-size: 14px;
 }
+
+/* Product image */
 
 .product-image {
+  display: block;
   width: 100%;
   height: 180px;
+  margin-bottom: 16px;
   object-fit: contain;
-  margin-bottom: 12px;
 }
 
+/* Stock status */
+
 .in-stock {
-  color: #16803c;
+  color: #16803c !important;
 }
 
 .out-of-stock {
-  color: #dc2626;
+  color: #dc2626 !important;
 }
+
+/* Add to cart button */
 
 .product button {
   width: 100%;
-  padding: 10px;
   margin-top: 12px;
+  padding: 12px;
   border: none;
-  border-radius: 6px;
-  background-color: #2563eb;
-  color: white;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.product button:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.product button:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .product button:disabled {
-  background-color: #999999;
+  background: #999999;
   cursor: not-allowed;
+}
+
+/* ========================================
+   RESPONSIVE: TABLET
+======================================== */
+
+@media (max-width: 1100px) {
+  .header-inner {
+    grid-template-columns: 180px minmax(220px, 1fr);
+    gap: 24px;
+  }
+
+  .header-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
+
+/* ========================================
+   RESPONSIVE: MOBILE
+======================================== */
+
+@media (max-width: 640px) {
+  .header-inner {
+    grid-template-columns: 1fr auto;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .logo {
+    font-size: 21px;
+  }
+
+  .header-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    height: 54px;
+    padding: 0 16px;
+    gap: 10px;
+    border-radius: 16px;
+  }
+
+  .search-icon {
+    font-size: 24px;
+  }
+
+  .search-label,
+  .search-field input,
+  .suggestion-window {
+    font-size: 15px;
+  }
+
+  .search-dropdown {
+    padding: 18px 20px;
+    border-radius: 18px;
+  }
+
+  .popular-search-item {
+    font-size: 14px;
+  }
+
+  .header-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .header-actions a {
+    font-size: 12px;
+  }
+
+  .main {
+    margin: 28px auto;
+    padding: 0 16px;
+  }
+
+  .main h2 {
+    font-size: 22px;
+  }
+
+  .products {
+    grid-template-columns: repeat(
+      auto-fill,
+      minmax(150px, 1fr)
+    );
+    gap: 12px;
+  }
+
+  .product {
+    padding: 12px;
+  }
+
+  .product-image {
+    height: 140px;
+  }
+
+  .product h3 {
+    font-size: 14px;
+  }
+
+  .product p {
+    font-size: 12px;
+  }
+
+  .product button {
+    padding: 10px;
+    font-size: 12px;
+  }
 }

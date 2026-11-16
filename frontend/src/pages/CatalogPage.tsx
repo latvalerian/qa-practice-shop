@@ -10,8 +10,11 @@ interface Product {
   stock_quantity: number
 }
 
+interface CatalogPageProps {
+  searchQuery: string
+}
 
-function CatalogPage() {
+function CatalogPage({ searchQuery }: CatalogPageProps) {
   const [products, setProducts] = useState<Product[]>([])
   const [cartMessage, setCartMessage] = useState('')
 
@@ -33,6 +36,15 @@ function CatalogPage() {
 
     fetchProducts()
   }, [])
+
+  const filteredProducts = products.filter((product) => {
+    const query = searchQuery.toLowerCase().trim()
+
+    return (
+      product.name.toLowerCase().includes(query) ||
+      product.description.toLowerCase().includes(query)
+    )
+  })
 
   async function handleAddToCart(productId: number) {
     try {
@@ -64,34 +76,46 @@ function CatalogPage() {
 
       {cartMessage && <p>{cartMessage}</p>}
 
-      <div className="products">
-        {products.map((product) => (
-          <div className="product" key={product.id}>
-            {product.image_url && (
-              <img
-                src={product.image_url}
-                alt={product.name}
-                className="product-image"
-              />
-            )}
+      {filteredProducts.length === 0 ? (
+        <p>No products found</p>
+      ) : (
+        <div className="products">
+          {filteredProducts.map((product) => (
+            <div className="product" key={product.id}>
+              {product.image_url && (
+                <img
+                  src={product.image_url}
+                  alt={product.name}
+                  className="product-image"
+                />
+              )}
 
-            <h3>{product.name}</h3>
-            <p>{product.description}</p>
-            <p>Price: ${(product.price_cents / 100).toFixed(2)}</p>
+              <h3>{product.name}</h3>
+              <p>{product.description}</p>
+              <p>Price: ${(product.price_cents / 100).toFixed(2)}</p>
 
-            <p className={product.stock_quantity > 0 ? 'in-stock' : 'out-of-stock'}>
-              {product.stock_quantity > 0 ? 'In stock' : 'Out of stock'}
-            </p>
+              <p
+                className={
+                  product.stock_quantity > 0
+                    ? 'in-stock'
+                    : 'out-of-stock'
+                }
+              >
+                {product.stock_quantity > 0
+                  ? 'In stock'
+                  : 'Out of stock'}
+              </p>
 
-            <button
-              onClick={() => handleAddToCart(product.id)}
-              disabled={product.stock_quantity <= 0}
-            >
-              Add to cart
-            </button>
-          </div>
-        ))}
-      </div>
+              <button
+                onClick={() => handleAddToCart(product.id)}
+                disabled={product.stock_quantity <= 0}
+              >
+                Add to cart
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </main>
   )
 }
