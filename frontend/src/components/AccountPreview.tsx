@@ -55,7 +55,7 @@ function AccountPreview({ onClose }: AccountPreviewProps) {
       ) : user ? (
         <>
           <div className="account-preview-user">
-            <strong>{user.email.split('@')[0]}</strong>
+            <strong>{user.full_name || user.email.split('@')[0]}</strong>
             <span>{user.email}</span>
           </div>
           <div className="account-preview-links">
@@ -70,7 +70,7 @@ function AccountPreview({ onClose }: AccountPreviewProps) {
         <div className="account-preview-guest">
           <p>Sign in to view your orders and account details.</p>
           <Link className="preview-primary" to="/login" onClick={onClose}>Sign in</Link>
-          <Link className="preview-secondary" to="/login?mode=register" onClick={onClose}>Create account</Link>
+          <Link className="preview-secondary" to="/register" onClick={onClose}>Create account</Link>
         </div>
       )}
     </section>

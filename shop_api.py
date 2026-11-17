@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import hmac
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -34,10 +35,11 @@ def _user(authorization: str | None, db):
         return None
     token = authorization.split(None, 1)[1]
     with db.cursor() as cur:
-        cur.execute("""SELECT u.id, u.email, u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id
+        cur.execute("""SELECT u.id, u.email, u.role, u.full_name, u.phone_number, u.created_at
+                     FROM auth_sessions s JOIN users u ON u.id=s.user_id
                      WHERE s.token_hash=%s AND s.expires_at>NOW() AND u.is_active""", (_hash(token),))
         row = cur.fetchone()
-    return dict(id=row[0], email=row[1], role=row[2]) if row else None
+    return dict(id=row[0], email=row[1], role=row[2], full_name=row[3], phone_number=row[4], created_at=row[5]) if row else None
 
 
 def require_user(authorization: str | None, db, request: Request | None = None):
@@ -52,6 +54,49 @@ def require_user(authorization: str | None, db, request: Request | None = None):
 class Credentials(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=200)
+
+
+class RegistrationCredentials(Credentials):
+    full_name: str = Field(default='', max_length=120)
+    phone_number: str = Field(default='', max_length=40)
+
+    @field_validator('full_name')
+    @classmethod
+    def clean_full_name(cls, value):
+        value = value.strip()
+        return value
+
+    @field_validator('phone_number')
+    @classmethod
+    def clean_phone_number(cls, value):
+        return value.strip()
+
+
+class LoginCredentials(Credentials):
+    remember_me: bool = True
+
+
+class AccountProfileUpdate(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)
+    phone_number: str = Field(default='', max_length=40)
+
+    @field_validator('full_name')
+    @classmethod
+    def clean_full_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('Full name cannot be blank')
+        return value
+
+    @field_validator('phone_number')
+    @classmethod
+    def clean_profile_phone(cls, value):
+        return value.strip()
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=8, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class ProductInput(BaseModel):
@@ -121,31 +166,36 @@ def _cart(db, user, guest_hash):
 
 
 @router.post('/auth/register', status_code=201)
-def register(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
+def register(body: RegistrationCredentials, request: Request, response: Response, db=Depends(get_db)):
     token = secrets.token_urlsafe(32)
     with db.cursor() as cur:
-        cur.execute('INSERT INTO users(email,password_hash) VALUES (%s,%s) ON CONFLICT(email) DO NOTHING RETURNING id,email,role', (body.email.strip().lower(), _password_hash(body.password)))
+        cur.execute('''INSERT INTO users(email,password_hash,full_name,phone_number)
+                       VALUES (%s,%s,%s,%s) ON CONFLICT(email) DO NOTHING
+                       RETURNING id,email,role,full_name,phone_number''',
+                    (body.email.strip().lower(), _password_hash(body.password), body.full_name, body.phone_number))
         user = cur.fetchone()
         if not user: raise HTTPException(409, 'Email already registered')
         cur.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (%s,%s,NOW()+INTERVAL '30 days')", (_hash(token), user[0]))
     _merge_guest_cart(db, user[0], request)
     response.delete_cookie('shop_guest')
-    response.set_cookie('shop_session', token, httponly=True, samesite='lax', max_age=30*86400)
-    return {'id': user[0], 'email': user[1], 'role': user[2], 'access_token': token, 'token_type': 'bearer'}
+    response.set_cookie('shop_session', token, httponly=True, secure=request.url.scheme == 'https', samesite='lax', max_age=30*86400)
+    return {'id': user[0], 'email': user[1], 'role': user[2], 'full_name': user[3], 'phone_number': user[4], 'access_token': token, 'token_type': 'bearer'}
 
 
 @router.post('/auth/login')
-def login(body: Credentials, request: Request, response: Response, db=Depends(get_db)):
+def login(body: LoginCredentials, request: Request, response: Response, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute('SELECT id,email,password_hash,role FROM users WHERE email=%s AND is_active', (body.email.strip().lower(),))
         user = cur.fetchone()
         if not user or not _password_verify(body.password, user[2]):
             raise HTTPException(401, 'Invalid email or password')
         token = secrets.token_urlsafe(32)
-        cur.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (%s,%s,NOW()+INTERVAL '30 days')", (_hash(token), user[0]))
+        session_lifetime = 30 * 86400 if body.remember_me else 12 * 3600
+        cur.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (%s,%s,NOW()+(%s * INTERVAL '1 second'))",
+                    (_hash(token), user[0], session_lifetime))
     _merge_guest_cart(db, user[0], request)
     response.delete_cookie('shop_guest')
-    response.set_cookie('shop_session', token, httponly=True, samesite='lax', max_age=30*86400)
+    response.set_cookie('shop_session', token, httponly=True, secure=request.url.scheme == 'https', samesite='lax', max_age=session_lifetime if body.remember_me else None)
     return {'id': user[0], 'email': user[1], 'role': user[3], 'access_token': token, 'token_type': 'bearer'}
 
 
@@ -160,6 +210,40 @@ def logout(request: Request, response: Response, authorization: str | None = Hea
 @router.get('/auth/me')
 def me(request: Request, authorization: str | None = Header(default=None), db=Depends(get_db)):
     return require_user(authorization, db, request)
+
+
+@router.put('/auth/profile')
+def update_profile(body: AccountProfileUpdate, request: Request,
+                   authorization: str | None = Header(default=None), db=Depends(get_db)):
+    user = require_user(authorization, db, request)
+    with db.cursor() as cur:
+        cur.execute('''UPDATE users SET full_name=%s,phone_number=%s
+                       WHERE id=%s RETURNING id,email,role,full_name,phone_number,created_at''',
+                    (body.full_name, body.phone_number, user['id']))
+        row = cur.fetchone()
+    return dict(id=row[0], email=row[1], role=row[2], full_name=row[3], phone_number=row[4], created_at=row[5])
+
+
+@router.post('/auth/password')
+def change_password(body: PasswordChange, request: Request, response: Response,
+                    authorization: str | None = Header(default=None), db=Depends(get_db)):
+    user = require_user(authorization, db, request)
+    with db.cursor() as cur:
+        cur.execute('SELECT password_hash FROM users WHERE id=%s AND is_active', (user['id'],))
+        stored_hash = cur.fetchone()
+    if not stored_hash or not _password_verify(body.current_password, stored_hash[0]):
+        raise HTTPException(400, 'Current password is incorrect')
+    if body.current_password == body.new_password:
+        raise HTTPException(422, 'New password must be different from the current password')
+
+    token = secrets.token_urlsafe(32)
+    with db.cursor() as cur:
+        cur.execute('UPDATE users SET password_hash=%s WHERE id=%s', (_password_hash(body.new_password), user['id']))
+        cur.execute('DELETE FROM auth_sessions WHERE user_id=%s', (user['id'],))
+        cur.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (%s,%s,NOW()+INTERVAL '12 hours')",
+                    (_hash(token), user['id']))
+    response.set_cookie('shop_session', token, httponly=True, secure=request.url.scheme == 'https', samesite='lax')
+    return {'status': 'password_updated', 'access_token': token, 'token_type': 'bearer'}
 
 
 @router.get('/products')

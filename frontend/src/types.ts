@@ -17,6 +17,9 @@ export interface AccountUser {
   id: number
   email: string
   role: string
+  full_name: string
+  phone_number: string
+  created_at: string
 }
 
 export interface OrderSummary {

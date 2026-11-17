@@ -13,8 +13,10 @@ import type { CartResponse } from './types'
 
 const searchSuggestions = [
   'headphones',
-  'keyboards',
-  'monitors',
+  'keyboard',
+  'monitor',
+  'mouse',
+  'laptop',
 ]
 
 const popularSearches = [
@@ -142,7 +144,7 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header className={`header ${location.pathname === '/login' || location.pathname === '/register' ? 'header-auth' : ''}`}>
         <div className="header-inner">
           <Link to="/" className="logo">
             <span className="logo-mark">Q</span> QA Practice Shop
@@ -331,6 +333,7 @@ function App() {
         />
         <Route path="/cart" element={<CartPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<LoginPage />} />
         <Route path="/account" element={<AccountPage />} />
       </Routes>
     </div>
