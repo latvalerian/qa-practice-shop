@@ -6,6 +6,10 @@ import './App.css'
 import CatalogPage from './pages/CatalogPage'
 import CartPage from './pages/CartPage'
 import LoginPage from './pages/LoginPage'
+import AccountPage from './pages/AccountPage'
+import AccountPreview from './components/AccountPreview'
+import CartPreview from './components/CartPreview'
+import type { CartResponse } from './types'
 
 const searchSuggestions = [
   'headphones',
@@ -25,7 +29,9 @@ const popularSearches = [
 const quickSearches = ['Headphones', 'Keyboards', 'Monitors']
 
 function App() {
-  const [cartCount, setCartCount] = useState(0)
+  const [cart, setCart] = useState<CartResponse>({ items: [], total_cents: 0, currency: 'USD' })
+  const [isCartLoading, setIsCartLoading] = useState(false)
+  const [activePreview, setActivePreview] = useState<'cart' | 'account' | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [suggestionIndex, setSuggestionIndex] = useState(0)
   const [isSearchFocused, setIsSearchFocused] = useState(false)
@@ -36,8 +42,10 @@ function App() {
   const siteSearchInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
   const location = useLocation()
+  const cartCount = cart.items.reduce((sum, item) => sum + item.quantity, 0)
 
   async function fetchCart() {
+    setIsCartLoading(true)
     try {
       const response = await fetch('/api/cart')
 
@@ -47,19 +55,33 @@ function App() {
 
       const data = await response.json()
 
-      const count = data.items.reduce(
-        (sum: number, item: { quantity: number }) => sum + item.quantity,
-        0
-      )
-
-      setCartCount(count)
+      setCart(data as CartResponse)
     } catch (error) {
       console.error(error)
+    } finally {
+      setIsCartLoading(false)
     }
   }
 
+  async function updateCartQuantity(productId: number, quantity: number) {
+    const response = quantity < 1
+      ? await fetch(`/api/cart/items/${productId}`, { method: 'DELETE' })
+      : await fetch(`/api/cart/items/${productId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quantity }),
+        })
+    const data = response.status === 204 ? null : await response.json().catch(() => null)
+    if (!response.ok) throw new Error(data?.detail ?? 'Could not update your cart.')
+    if (data) setCart(data as CartResponse)
+    else await fetchCart()
+  }
+
   useEffect(() => {
-    fetchCart()
+    void fetchCart()
+    const refreshCart = () => { void fetchCart() }
+    window.addEventListener('cart-updated', refreshCart)
+    return () => window.removeEventListener('cart-updated', refreshCart)
   }, [])
 
   // Rotate search suggestions every second
@@ -86,6 +108,15 @@ function App() {
     if (isSiteSearchOpen) siteSearchInputRef.current?.focus()
   }, [isSiteSearchOpen])
 
+  useEffect(() => {
+    if (!activePreview) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActivePreview(null)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [activePreview])
+
   const closeSiteSearch = () => {
     setIsSiteSearchOpen(false)
     setSiteSearchQuery('')
@@ -95,7 +126,7 @@ function App() {
     { title: 'Shop', detail: 'Browse the homepage and featured products', to: '/#home' },
     { title: 'Catalog', detail: 'Browse and search all products', to: '/#catalog' },
     { title: 'Cart', detail: 'Review items in your shopping cart', to: '/cart' },
-    { title: 'Account', detail: 'Sign in or manage your account', to: '/login' },
+    { title: 'Account', detail: 'Sign in or manage your account', to: '/account' },
   ]
 
   const matchingSections = siteSections.filter((section) =>
@@ -128,17 +159,32 @@ function App() {
               type="button"
               aria-label="Search the site"
               aria-expanded={isSiteSearchOpen}
-              onClick={() => setIsSiteSearchOpen(true)}
+              onClick={() => { setActivePreview(null); setIsSiteSearchOpen(true) }}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2" /><path d="m15.4 15.4 4.1 4.1" /></svg>
             </button>
-            <Link to="/cart" className={`icon-action ${location.pathname === '/cart' ? 'active' : ''}`} aria-label={`Cart, ${cartCount} items`}>
+            <button
+              type="button"
+              className={`icon-action ${activePreview === 'cart' || location.pathname === '/cart' ? 'active' : ''}`}
+              aria-label={`Open cart preview, ${cartCount} items`}
+              aria-expanded={activePreview === 'cart'}
+              onClick={() => {
+                setActivePreview((current) => current === 'cart' ? null : 'cart')
+                void fetchCart()
+              }}
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l1 12H5L6 8Z" /><path d="M9 9V6a3 3 0 0 1 6 0v3" /></svg>
               {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
-            </Link>
-            <Link to="/login" className={`icon-action ${location.pathname === '/login' ? 'active' : ''}`} aria-label="Account">
+            </button>
+            <button
+              type="button"
+              className={`icon-action ${activePreview === 'account' || location.pathname === '/account' || location.pathname === '/login' ? 'active' : ''}`}
+              aria-label="Open account preview"
+              aria-expanded={activePreview === 'account'}
+              onClick={() => setActivePreview((current) => current === 'account' ? null : 'account')}
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20a6.5 6.5 0 0 1 13 0" /></svg>
-            </Link>
+            </button>
           </nav>
         </div>
       </header>
@@ -197,6 +243,19 @@ function App() {
             <p className="site-search-hint">Search pages directly, or press Enter to search the product catalog.</p>
           </section>
         </div>
+      )}
+
+      {activePreview && (
+        <>
+          <div className="quick-preview-backdrop" onMouseDown={() => setActivePreview(null)} />
+          <div className="quick-preview-anchor" onMouseDown={(event) => event.stopPropagation()}>
+            {activePreview === 'cart' ? (
+              <CartPreview cart={cart} isLoading={isCartLoading} onClose={() => setActivePreview(null)} onUpdateQuantity={updateCartQuantity} />
+            ) : (
+              <AccountPreview onClose={() => setActivePreview(null)} />
+            )}
+          </div>
+        </>
       )}
 
       <Routes>
@@ -272,6 +331,7 @@ function App() {
         />
         <Route path="/cart" element={<CartPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/account" element={<AccountPage />} />
       </Routes>
     </div>
   )

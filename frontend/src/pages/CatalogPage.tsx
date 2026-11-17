@@ -93,6 +93,7 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
       }
 
       setCartMessage('Product added to cart')
+      window.dispatchEvent(new Event('cart-updated'))
     } catch (error) {
       console.error(error)
       setCartMessage('Failed to add product to cart')
