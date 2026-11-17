@@ -220,22 +220,29 @@ The Vite development server proxies `/api` requests to the FastAPI backend.
 
 ## Running Tests
 
-Run the complete backend test suite:
+The QA workflow and browser scenarios are documented in [the test plan](docs/qa/TEST_PLAN.md) and [manual test cases](docs/qa/TEST_CASES.md). The current automated suite covers backend product/catalog behavior; it does not yet automate frontend or browser flows.
+
+Before running backend tests, prepare and select the dedicated `qa_practice_shop_test` database as described in the test plan. The test fixtures clear data in that database. Never run them against development or production data.
+
+Run the backend test suite from the project root:
 
 ```powershell
-python -m pytest -v
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
-Run a specific test file:
+Run the frontend production build check:
 
 ```powershell
-python -m pytest -v tests/test_products.py
+cd frontend
+npm run build
 ```
 
-Run a specific test:
+To run one backend test file or case, use:
 
 ```powershell
-python -m pytest -v tests/test_products.py::test_concurrent_checkouts_do_not_oversell_stock
+cd ..
+.\.venv\Scripts\python.exe -m pytest -v tests/test_products.py
+.\.venv\Scripts\python.exe -m pytest -v tests/test_products.py::test_concurrent_checkouts_do_not_oversell_stock
 ```
 
 ## API Documentation

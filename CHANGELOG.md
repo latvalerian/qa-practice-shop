@@ -25,21 +25,18 @@ The project is currently under active development. Changes are tracked under `Un
 - Administrative user and product management.
 
 #### Testing
-- Pytest test suite for API functionality.
-- Database isolation for automated tests.
-- Authentication and authorization tests.
-- Shopping cart and checkout tests.
-- Stock reservation and inventory validation tests.
-- Concurrent cart addition test.
-- Concurrent checkout test to verify overselling protection.
+- Pytest integration tests for product/catalog API behavior, including concurrent checkout and stock protection.
+- Dedicated test database setup for automated tests.
+- QA test plan and manual regression scenarios for authentication, account, catalog, cart, checkout and authorization (`docs/qa/`).
+- Documented frontend production build check; browser automation is not set up yet.
 
 #### Frontend
 - React application initialized with Vite.
 - TypeScript integration.
 - React Router navigation.
-- Catalog page.
-- Cart page scaffold.
-- Login page scaffold.
+- Storefront with product search, category/filter controls and catalog cards.
+- Interactive cart preview and full cart page with checkout flow.
+- Login, registration and authenticated account page with profile/security settings.
 - API proxy configuration using the `/api` prefix.
 
 ### Changed
@@ -56,14 +53,9 @@ The project is currently under active development. Changes are tracked under `Un
 
 ### Planned
 
-- Complete storefront UI and responsive layout.
-- Product search and filtering.
 - Product favorites.
-- Shopping cart drawer.
-- Full shopping cart page.
-- User profile and account management.
-- Checkout interface.
-- Order history and tracking.
+- Admin dashboard UI.
+- Order tracking interface.
 - Bonus points system.
 - Customer support interface.
 - AI-powered support assistant.
