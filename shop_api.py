@@ -30,10 +30,21 @@ def _password_verify(password: str, stored: str) -> bool:
         return hmac.compare_digest(digest.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
-def _user(authorization: str | None, db):
-    if not authorization or not authorization.lower().startswith('bearer '):
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
         return None
-    token = authorization.split(None, 1)[1]
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != 'bearer' or not parts[1].strip():
+        return None
+    return parts[1].strip()
+
+
+def _user(authorization: str | None, db):
+    token = _bearer_token(authorization)
+    if not token:
+        return None
     with db.cursor() as cur:
         cur.execute("""SELECT u.id, u.email, u.role, u.full_name, u.phone_number, u.created_at
                      FROM auth_sessions s JOIN users u ON u.id=s.user_id
@@ -201,7 +212,7 @@ def login(body: LoginCredentials, request: Request, response: Response, db=Depen
 
 @router.post('/auth/logout', status_code=204)
 def logout(request: Request, response: Response, authorization: str | None = Header(default=None), db=Depends(get_db)):
-    token = authorization.split(None,1)[1] if authorization and authorization.lower().startswith('bearer ') else request.cookies.get('shop_session')
+    token = _bearer_token(authorization) or request.cookies.get('shop_session')
     if token:
         with db.cursor() as cur: cur.execute('DELETE FROM auth_sessions WHERE token_hash=%s', (_hash(token),))
     response.delete_cookie('shop_session')

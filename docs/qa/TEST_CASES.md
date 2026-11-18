@@ -1,6 +1,6 @@
 # QA Practice Shop — Manual Test Scenarios
 
-This file is a version-controlled smoke/regression checklist, not a full test-management database. Each scenario gives a short action and observable result. Record the build, browser and outcome in the run record. For a formal test case, expand the scenario with exact test data and numbered steps before execution.
+This file is a version-controlled smoke/regression checklist, not a full test-management database. Each scenario gives a short action and observable result. `UI` cases are manual browser checks; `API` cases call the backend directly and do not require the frontend. Record the build, browser (for UI cases) and outcome in the run record. For a formal test case, expand the scenario with exact test data and numbered steps before execution.
 
 Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, tokens, cookies or real payment details in this file or in screenshots.
 
@@ -57,6 +57,12 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 - **Expected:** Invalid data is rejected consistently by the browser and server.
 
 **Known gap:** The API currently checks email length but not email syntax, trims names without rejecting a blank result, and only trims phone text. Record the API-accepted invalid values as defects; browser validation alone is not sufficient.
+
+### AUTH-11 — Empty or malformed Bearer authorization · P1 · API
+
+- **Action:** Send `GET /auth/me` with `Authorization: Bearer ` (empty token), then with a malformed authorization scheme/token.
+- **Expected:** The API returns `401 Unauthorized` without a server error or traceback. No protected account data is returned.
+- **Automation:** The backend suite includes a regression check for the empty Bearer-token parsing path; this manual case checks the HTTP response boundary.
 
 ## Catalog and cart
 
@@ -146,6 +152,6 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 
 ## Execution record
 
-| Date | Commit/build | Browser | Cases run | Result / defect links |
+| Date | Commit/build | Browser (UI only) | Cases run | Result / defect links |
 |---|---|---|---|---|
 |  |  |  |  |  |

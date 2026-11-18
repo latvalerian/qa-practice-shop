@@ -26,8 +26,10 @@ The project is currently under active development. Changes are tracked under `Un
 
 #### Testing
 - Pytest integration tests for product/catalog API behavior, including concurrent checkout and stock protection.
+- Added a backend regression test for empty Bearer authorization returning `401` instead of `500`.
 - Dedicated test database setup for automated tests.
 - QA test plan and manual regression scenarios for authentication, account, catalog, cart, checkout and authorization (`docs/qa/`).
+- Updated the QA plan for the security-focused backend pass and added an API case for malformed authorization headers.
 - Documented frontend production build check; browser automation is not set up yet.
 
 #### Frontend
@@ -47,6 +49,7 @@ The project is currently under active development. Changes are tracked under `Un
 
 ### Fixed
 
+- Fixed handling of empty or malformed Bearer authorization headers in authenticated routes and logout.
 - Fixed cart quantity validation when multiple requests are executed concurrently.
 - Fixed concurrent checkout overselling scenario.
 - Resolved frontend route and backend API path conflict.

@@ -1,7 +1,7 @@
 # QA Practice Shop — Test Plan
 
-- **Version:** 1.0
-- **Updated:** 2026-11-17
+- **Version:** 1.1
+- **Updated:** 2026-11-19
 - **Status:** Active development
 
 ## Purpose
@@ -18,7 +18,11 @@ Define a repeatable way to check the shop before changes are treated as ready. T
 - Guest and authenticated carts, quantity updates, cart merging and stock limits.
 - Checkout, order history, cancellation and ownership checks.
 - Customer versus administrator authorization.
-- Desktop/mobile layout, keyboard interaction, loading, empty and error states.
+- Backend security behavior: malformed/missing credentials, authorization boundaries, ownership isolation, input validation, and inventory integrity under concurrent requests.
+
+### Deferred for this security pass
+
+- Frontend quality, layout, keyboard interaction, loading, empty and error states. These remain in the regression plan for a later frontend pass.
 
 ### Out of scope for the current build
 
@@ -29,12 +33,13 @@ Define a repeatable way to check the shop before changes are treated as ready. T
 
 ## Test approach
 
-1. **Backend integration tests:** run pytest against the dedicated `qa_practice_shop_test` database. The fixtures truncate data in that database; never point it at the development or production database.
-2. **Frontend static/build check:** run the TypeScript/Vite production build. This catches type and bundling errors but does not replace browser tests.
-3. **Manual browser checks:** follow the cases in [TEST_CASES.md](TEST_CASES.md) on the local app. Record result, build/commit, browser and any defect.
-4. **Regression:** rerun the backend suite and frontend build after changes to shared auth, catalog, cart or order behavior; repeat affected manual cases.
+1. **Backend integration tests:** from the repository root, run `.\.venv\Scripts\python.exe -m pytest -q` against the dedicated `qa_practice_shop_test` database. Fixtures truncate test data; never point them at development or production.
+2. **Security review:** inspect authentication/authorization, database access, input handling, session lifecycle, and concurrent writes. Turn confirmed defects into backend regression tests.
+3. **Manual API checks:** use the backend security cases in [TEST_CASES.md](TEST_CASES.md) for behaviors that are not yet automated. Record result and any defect.
+4. **Deferred frontend checks:** run the TypeScript/Vite build and manual browser cases in a later frontend-focused pass.
+5. **Regression:** rerun the backend suite after changes to auth, catalog, cart, order, or admin behavior.
 
-There is no frontend unit or browser automation suite yet. Adding browser automation is a future step after the manual flows stabilize.
+The backend suite currently covers public catalog access, authentication and logout, role restrictions, cart ownership/merge/limits, checkout authorization and idempotency, order ownership, stock reservation/expiry, and concurrent cart/checkouts. Frontend unit or browser automation is not part of this security pass.
 
 ## Environments and data
 
@@ -65,9 +70,10 @@ If the database already exists, skip the create command. Confirm the selected da
 
 ## Exit criteria
 
-- Backend tests pass against `qa_practice_shop_test`.
-- Frontend production build succeeds.
-- Critical manual flows (registration/sign-in, cart update, checkout authorization, profile/password, role access) pass or have documented defects.
+- Backend tests pass against `qa_practice_shop_test` after security fixes.
+- Security review findings are fixed or documented with severity and reproduction steps.
+- Backend security cases pass or have documented defects.
+- Frontend production build and browser flows are deferred to the next frontend-focused pass.
 - No unresolved blocker prevents the intended user flow. Known limitations and accepted defects are recorded.
 
 ## Defect reporting
