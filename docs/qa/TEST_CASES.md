@@ -28,8 +28,8 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 
 ### AUTH-05 — Sign out and revisit the account · P1
 
-- **Action:** Sign out, then open `/account` directly.
-- **Expected:** The session is cleared and the page asks the user to sign in.
+- **Action:** Choose sign out from the account preview and account page; cancel once, then confirm and open `/account` directly.
+- **Expected:** An in-site confirmation dialog appears. Cancel keeps the session active; confirming clears it and the page asks the user to sign in.
 
 ### AUTH-06 — Remember me behavior · P2
 
@@ -64,7 +64,42 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 - **Expected:** The API returns `401 Unauthorized` without a server error or traceback. No protected account data is returned.
 - **Automation:** The backend suite includes a regression check for the empty Bearer-token parsing path; this manual case checks the HTTP response boundary.
 
+### AUTH-12 — Confirm sign-out from account preview and account page · P1
+
+- **Action:** Open the account preview or account page and choose `Sign out`. Cancel the confirmation once, then choose sign out again and confirm.
+- **Expected:** Cancel keeps the session active. Confirming clears the session and routes to sign-in. Both sign-out controls remain available.
+
+### ACC-01 — Account page readability and responsive layout · P2
+
+- **Action:** Open the account page on desktop and mobile widths. Review the profile card, sidebar, payment/security cards, order history and settings dialog.
+- **Expected:** Text and controls are readable and consistent with the storefront; sections fit the viewport without horizontal overflow.
+
 ## Catalog and cart
+
+### CAT-03 — Add-to-cart feedback at any scroll position · P2
+
+- **Action:** Add a product from the top row, then scroll down and add another product.
+- **Expected:** A centered confirmation appears over the viewport in both cases and dismisses automatically.
+
+### CAT-04 — Adjust cart quantity from product cards · P1
+
+- **Action:** Add a product, increase its quantity, decrease it, then decrease from one to zero; cancel the site confirmation once, then confirm removal.
+- **Expected:** The card shows the current cart quantity beside the price, `+` and `−` update the cart and header count, and confirming removal at one clears the count. Cancel keeps the product in the cart.
+
+### NAV-01 — Sticky header and back-to-top control · P2
+
+- **Action:** Scroll down a long page, use the header actions, then use the arrow that appears near the bottom corner.
+- **Expected:** The header remains visible while scrolling; the arrow returns the page smoothly to the top and is hidden near the top.
+
+### NAV-02 — About link and shared footer · P2
+
+- **Action:** Select `About` from the catalog, cart and account pages, including once while the footer is already visible; inspect the footer links.
+- **Expected:** The current route is preserved and the page moves directly to the footer. If already visible, the footer is briefly highlighted. Footer links appear in one row and include GitHub, LinkedIn, Instagram and Telegram.
+
+### CART-11 — Cart typography and responsive sizing · P2
+
+- **Action:** Review the cart page on desktop and mobile widths, including the order summary and checkout form.
+- **Expected:** Text is comfortably readable and visually consistent with the catalog and account pages, without horizontal overflow.
 
 ### CART-01 — Add an in-stock product as a guest · P1
 
@@ -93,13 +128,33 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 
 ### CART-06 — Category, filters and sorting · P2
 
-- **Action:** Select each category, stock/price filters and sort option; then clear filters.
-- **Expected:** Product list and result count reflect selections; clearing restores the full result set.
+- **Action:** Open Filters, interact with controls inside it, click elsewhere to dismiss it, then select categories, filters and sort options.
+- **Expected:** Clicking inside the popover keeps it open; clicking outside closes it. Product list and result count reflect selections; clearing restores the full result set.
 
-### CART-07 — Search and popular-search chips · P2
+### CART-08 — Cart preview has one cart action · P2
 
-- **Action:** Search for a matching term, use a popular-search chip, then search for a term with no matches. Check focus and keyboard interaction.
-- **Expected:** Matching products are shown; no-match state is clear; input, suggestions and keyboard controls work.
+- **Action:** Open the cart preview with at least one item and inspect its actions; activate `Checkout`.
+- **Expected:** There is one action to continue to the full cart/checkout flow; it opens `/cart`.
+
+### CART-09 — Confirm removing a cart item · P2
+
+- **Action:** Use the trash icon or reduce an item quantity from one to zero in the preview or full cart; cancel once, then repeat and confirm.
+- **Expected:** A branded in-site confirmation appears. Cancel keeps the item; confirmation removes only that item. The trash icon is positioned before the quantity control.
+
+### CART-10 — Clear all or selected cart items · P1
+
+- **Action:** Clear the cart with all items selected, then add several items and clear only a subset; cancel one confirmation before confirming the next.
+- **Expected:** Confirmation cancel changes nothing; confirming removes the selected items only. Unselected items remain, and the cart preview count updates.
+
+### CAT-01 — Show catalog products in batches · P2
+
+- **Action:** Open the catalog with more than 20 matching products, click `Show more`, then change the search term or a filter.
+- **Expected:** The first 20 products appear initially; each click reveals up to 20 more; the button disappears when all matches are shown. Changing search or filters returns the list to the first batch.
+
+### CAT-02 — Search suggestions survive route changes · P2
+
+- **Action:** Observe rotating suggestions, open the account or cart, then return to the homepage. Also try a matching term, a popular-search chip and a no-match query.
+- **Expected:** Rotating suggestions resume from the start after returning; matching products are shown, no-match state is clear, and input, focus and keyboard controls work.
 
 ## Checkout, orders and authorization
 
@@ -110,8 +165,13 @@ Mark each run `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`. Do not put credentials, to
 
 ### ORDER-02 — Successful checkout · P1
 
-- **Action:** As an authenticated user, submit valid delivery details for a non-empty cart.
-- **Expected:** One pending-payment order is created, stock is reserved, and the cart is cleared.
+- **Action:** As an authenticated user, submit valid delivery details with all cart items selected.
+- **Expected:** One pending-payment order is created, stock is reserved for ordered items, and those items are removed from the cart.
+
+### ORDER-06 — Checkout selected cart items · P1
+
+- **Action:** As an authenticated user, select only some cart items and place an order; then try checkout with no items selected.
+- **Expected:** The order contains only selected items and the others remain in the cart. With no selection, checkout is blocked with a message asking to select at least one item.
 
 ### ORDER-03 — Empty cart or invalid delivery data · P1
 

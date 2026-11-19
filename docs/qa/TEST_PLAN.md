@@ -78,6 +78,8 @@ If the database already exists, skip the create command. Confirm the selected da
 
 ## Defect reporting
 
+Track discovered defects and their retest status in [BUG_REPORTS.md](BUG_REPORTS.md). Record features and usability improvements separately in the changelog.
+
 For each defect record: title, environment/build, preconditions, numbered steps, expected result, actual result, severity, reproducibility, and redacted screenshot/log evidence. Never attach passwords, session cookies, access tokens, `.env` contents or real payment details.
 
 Suggested severity: **Blocker** (core flow/data/security unusable), **Major** (important flow fails), **Minor** (workaround exists or limited UI defect), **Trivial** (cosmetic).

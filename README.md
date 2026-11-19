@@ -220,7 +220,7 @@ The Vite development server proxies `/api` requests to the FastAPI backend.
 
 ## Running Tests
 
-The QA workflow and browser scenarios are documented in [the test plan](docs/qa/TEST_PLAN.md) and [manual test cases](docs/qa/TEST_CASES.md). The current automated suite covers backend product/catalog behavior; it does not yet automate frontend or browser flows.
+The QA workflow, browser scenarios and defect log are documented in [the test plan](docs/qa/TEST_PLAN.md), [manual test cases](docs/qa/TEST_CASES.md) and [bug reports](docs/qa/BUG_REPORTS.md). The current automated suite covers backend product/catalog behavior; it does not yet automate frontend or browser flows.
 
 Before running backend tests, prepare and select the dedicated `qa_practice_shop_test` database as described in the test plan. The test fixtures clear data in that database. Never run them against development or production data.
 

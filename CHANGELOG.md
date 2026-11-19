@@ -37,7 +37,11 @@ The project is currently under active development. Changes are tracked under `Un
 - TypeScript integration.
 - React Router navigation.
 - Storefront with product search, category/filter controls and catalog cards.
+- Catalog reveals products in batches of 20 with a `Show more` control.
 - Interactive cart preview and full cart page with checkout flow.
+- Cart item selection, confirmed item removal and clearing selected items; checkout submits only selected products.
+- Shared project footer on every page, About navigation, creator profile links (GitHub, LinkedIn, Instagram and Telegram) and a back-to-top control.
+- Product cards show the current cart quantity beside the price and provide quantity controls synced with the cart.
 - Login, registration and authenticated account page with profile/security settings.
 - API proxy configuration using the `/api` prefix.
 
@@ -46,13 +50,26 @@ The project is currently under active development. Changes are tracked under `Un
 - Refactored available stock calculation into a reusable `_get_available_stock()` helper.
 - Updated cart stock validation to account for active reservations.
 - Separated frontend page routes from backend API routes.
+- Removed the unused legacy product `price` field; `price_cents` is the single source of truth.
+- Enlarged cart typography for consistency with the catalog and account pages.
+- Replaced native browser prompts for cart removal and sign-out with branded in-app confirmation dialogs; softened the add-to-cart notification to match the shop palette.
 
 ### Fixed
 
+- Aligned product card `Add to cart` buttons despite different description lengths.
+- Fixed account dashboard text and controls being undersized and difficult to read.
+- Removed the duplicate cart-preview link to `/cart`.
+- Replaced the redundant full-account action with `Sign out` in the account preview.
+- Added sign-out confirmation in the account preview and account page.
+- Closed the catalog filter popover when clicking outside it while keeping inside interactions usable.
+- Restarted rotating search suggestions when returning to the homepage after navigating to another route.
 - Fixed handling of empty or malformed Bearer authorization headers in authenticated routes and logout.
 - Fixed cart quantity validation when multiple requests are executed concurrently.
 - Fixed concurrent checkout overselling scenario.
 - Resolved frontend route and backend API path conflict.
+- Moved add-to-cart feedback into a centered notification that remains visible at any catalog scroll position.
+- Kept the site header visible while scrolling.
+- Fixed the About link so it scrolls to and briefly highlights the footer without navigating away from the current page.
 
 ### Planned
 
