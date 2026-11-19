@@ -1,5 +1,4 @@
-from fastapi import Depends, FastAPI, HTTPException, Path, Query
-from pydantic import BaseModel, Field, field_validator
+from fastapi import Depends, FastAPI
 
 from database import get_connection
 
@@ -8,60 +7,6 @@ app = FastAPI()
 def get_db():
     with get_connection() as connection:
         yield connection
-
-
-class ProductCreate(BaseModel):
-    name: str = Field(min_length=1)
-    price: int = Field(gt=0)
-
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, value):
-        value = value.strip()
-
-        if not value:
-            raise ValueError("Name cannot contain only whitespace")
-
-        return value
-
-class ProductUpdate(BaseModel):
-    name: str = Field(min_length=1)
-    price: int = Field(gt=0)
-
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, value):
-        value = value.strip()
-
-        if not value:
-            raise ValueError("Name cannot contain only whitespace")
-
-        return value
-
-class ProductPatch(BaseModel):
-    name: str | None = Field(default=None, min_length=1)
-    price: int | None = Field(default=None, gt=0)
-
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, value):
-        if value is None:
-            raise ValueError("Name cannot be null")
-
-        value = value.strip()
-
-        if not value:
-            raise ValueError("Name cannot contain only whitespace")
-
-        return value
-
-    @field_validator("price")
-    @classmethod
-    def validate_price(cls, value):
-        if value is None:
-            raise ValueError("Price cannot be null")
-
-        return value
 
 
 @app.get("/")
