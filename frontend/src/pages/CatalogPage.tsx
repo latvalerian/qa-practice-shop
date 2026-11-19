@@ -1,6 +1,7 @@
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import type { CartResponse } from '../types'
 
 interface Product {
   id: number
@@ -13,6 +14,8 @@ interface Product {
 
 interface CatalogPageProps {
   searchQuery: string
+  onCartNotice: (message: string, type?: 'success' | 'error') => void
+  confirmAction: (request: { title: string; message: string; confirmLabel: string }) => Promise<boolean>
   searchBar: ReactNode
   quickSearches: string[]
   onQuickSearch: (query: string) => void
@@ -28,11 +31,23 @@ const categoryKeywords: Record<Exclude<Category, 'All products'>, string[]> = {
   Accessories: ['accessor', 'cable', 'cooling pad', 'stand', 'chair', 'adapter'],
 }
 
-function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: CatalogPageProps) {
+const PRODUCTS_PER_PAGE = 20
+
+function cartQuantityMap(cart: CartResponse) {
+  return cart.items.reduce<Record<number, number>>((quantities, item) => {
+    quantities[item.product_id] = item.quantity
+    return quantities
+  }, {})
+}
+
+function CatalogPage({ searchQuery, onCartNotice, confirmAction, searchBar, quickSearches, onQuickSearch }: CatalogPageProps) {
   const [products, setProducts] = useState<Product[]>([])
-  const [cartMessage, setCartMessage] = useState('')
+  const [cartQuantities, setCartQuantities] = useState<Record<number, number>>({})
+  const [busyProductId, setBusyProductId] = useState<number | null>(null)
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_PAGE)
   const [selectedCategory, setSelectedCategory] = useState<Category>('All products')
   const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const filterControlRef = useRef<HTMLDivElement>(null)
   const [inStockOnly, setInStockOnly] = useState(false)
   const [maxPrice, setMaxPrice] = useState('any')
   const [sortOrder, setSortOrder] = useState('popular')
@@ -56,6 +71,45 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
     fetchProducts()
   }, [])
 
+  useEffect(() => {
+    let isCurrent = true
+    const refreshCartQuantities = async () => {
+      try {
+        const response = await fetch('/api/cart')
+        if (!response.ok) throw new Error('Could not load cart quantities.')
+        const data: CartResponse = await response.json()
+        if (isCurrent) setCartQuantities(cartQuantityMap(data))
+      } catch (error) {
+        console.error(error)
+      }
+    }
+    const handleCartUpdated = () => { void refreshCartQuantities() }
+
+    void refreshCartQuantities()
+    window.addEventListener('cart-updated', handleCartUpdated)
+    return () => {
+      isCurrent = false
+      window.removeEventListener('cart-updated', handleCartUpdated)
+    }
+  }, [])
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_PAGE)
+  }, [searchQuery, selectedCategory, inStockOnly, maxPrice, sortOrder])
+
+  useEffect(() => {
+    if (!isFilterOpen) return
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!filterControlRef.current?.contains(event.target as Node)) {
+        setIsFilterOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [isFilterOpen])
+
   const filteredProducts = products.filter((product) => {
     const query = searchQuery.toLowerCase().trim()
     const productText = `${product.name} ${product.description}`.toLowerCase()
@@ -74,29 +128,60 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
     if (sortOrder === 'name') return first.name.localeCompare(second.name)
     return 0
   })
+  const visibleProducts = sortedProducts.slice(0, visibleCount)
 
-  async function handleAddToCart(productId: number) {
-    try {
-      const response = await fetch('/api/cart/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          product_id: productId,
-          quantity: 1,
-        }),
+  async function changeCartQuantity(product: Product, quantity: number) {
+    const currentQuantity = cartQuantities[product.id] ?? 0
+    if (busyProductId === product.id) return
+    if (quantity < 1) {
+      const confirmed = await confirmAction({
+        title: 'Remove item from cart?',
+        message: product.name,
+        confirmLabel: 'Remove item',
       })
+      if (!confirmed) return
+    }
+
+    setBusyProductId(product.id)
+    try {
+      const isNewItem = currentQuantity === 0 && quantity > 0
+      const response = quantity === 0
+        ? await fetch(`/api/cart/items/${product.id}`, { method: 'DELETE' })
+        : isNewItem
+          ? await fetch('/api/cart/items', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_id: product.id, quantity }),
+            })
+          : await fetch(`/api/cart/items/${product.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quantity }),
+            })
 
       if (!response.ok) {
-        throw new Error('Failed to add product to cart')
+        const error = await response.json().catch(() => null)
+        throw new Error(error?.detail ?? 'Could not update your cart.')
       }
 
-      setCartMessage('Product added to cart')
+      if (quantity === 0) {
+        setCartQuantities((current) => {
+          const updated = { ...current }
+          delete updated[product.id]
+          return updated
+        })
+        onCartNotice('Product removed from cart')
+      } else if (response.status !== 204) {
+        const data: CartResponse = await response.json()
+        setCartQuantities(cartQuantityMap(data))
+        if (isNewItem) onCartNotice('Product added to cart')
+      }
       window.dispatchEvent(new Event('cart-updated'))
     } catch (error) {
       console.error(error)
-      setCartMessage('Failed to add product to cart')
+      onCartNotice(error instanceof Error ? error.message : 'Could not update your cart.', 'error')
+    } finally {
+      setBusyProductId(null)
     }
   }
 
@@ -137,7 +222,7 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
           <span>{filteredProducts.length} items</span>
         </div>
         <div className="catalog-controls">
-          <div className="filter-control-wrap">
+          <div className="filter-control-wrap" ref={filterControlRef}>
             <button
               type="button"
               className={`filter-trigger ${isFilterOpen || inStockOnly || maxPrice !== 'any' ? 'selected' : ''}`}
@@ -186,13 +271,11 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
         </div>
       </div>
 
-      {cartMessage && <p>{cartMessage}</p>}
-
       {filteredProducts.length === 0 ? (
         <p>No products found</p>
       ) : (
-        <div className="products">
-          {sortedProducts.map((product) => (
+        <div className="products" id="product-list">
+          {visibleProducts.map((product) => (
             <div className="product" key={product.id}>
               {product.image_url && (
                 <img
@@ -204,7 +287,16 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
 
               <h3>{product.name}</h3>
               <p>{product.description}</p>
-              <p>Price: ${(product.price_cents / 100).toFixed(2)}</p>
+              <div className="product-price-row">
+                <p>Price: ${(product.price_cents / 100).toFixed(2)}</p>
+                {(cartQuantities[product.id] ?? 0) > 0 && (
+                  <div className="product-cart-quantity" aria-label={`Quantity of ${product.name} in cart`}>
+                    <button type="button" aria-label={`Decrease ${product.name} quantity`} disabled={busyProductId === product.id} onClick={() => void changeCartQuantity(product, (cartQuantities[product.id] ?? 0) - 1)}>−</button>
+                    <span aria-live="polite">{cartQuantities[product.id]}</span>
+                    <button type="button" aria-label={`Increase ${product.name} quantity`} disabled={busyProductId === product.id} onClick={() => void changeCartQuantity(product, (cartQuantities[product.id] ?? 0) + 1)}>+</button>
+                  </div>
+                )}
+              </div>
 
               <p
                 className={
@@ -219,29 +311,29 @@ function CatalogPage({ searchQuery, searchBar, quickSearches, onQuickSearch }: C
               </p>
 
               <button
-                onClick={() => handleAddToCart(product.id)}
-                disabled={product.stock_quantity <= 0}
+                onClick={() => void changeCartQuantity(product, (cartQuantities[product.id] ?? 0) + 1)}
+                disabled={product.stock_quantity <= 0 || busyProductId === product.id || (cartQuantities[product.id] ?? 0) > 0}
               >
-                Add to cart
+                {(cartQuantities[product.id] ?? 0) > 0 ? 'Added to cart' : 'Add to cart'}
               </button>
             </div>
           ))}
         </div>
       )}
 
-      <footer className="shop-footer">
-        <div className="footer-about">
-          <strong>QA Practice Shop</strong>
-          <p>A learning project for practicing quality assurance on a real-world style online store.</p>
+      {visibleCount < sortedProducts.length && (
+        <div className="show-more-wrap">
+          <button
+            type="button"
+            className="show-more-button"
+            aria-controls="product-list"
+            onClick={() => setVisibleCount((count) => count + PRODUCTS_PER_PAGE)}
+          >
+            Show more
+          </button>
         </div>
-        <div className="footer-focus">
-          <span>Practice areas</span>
-          <p>UI testing · REST API · SQL · Responsive testing · Automation</p>
-        </div>
-        <a href="https://github.com/latvalerian/qa-practice-shop" target="_blank" rel="noreferrer">
-          View on GitHub <span aria-hidden="true">↗</span>
-        </a>
-      </footer>
+      )}
+
     </main>
   )
 }

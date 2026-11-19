@@ -1,5 +1,6 @@
 
 import { useEffect, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 
@@ -30,6 +31,12 @@ const popularSearches = [
 
 const quickSearches = ['Headphones', 'Keyboards', 'Monitors']
 
+type ConfirmationRequest = {
+  title: string
+  message: string
+  confirmLabel: string
+}
+
 function App() {
   const [cart, setCart] = useState<CartResponse>({ items: [], total_cents: 0, currency: 'USD' })
   const [isCartLoading, setIsCartLoading] = useState(false)
@@ -40,6 +47,13 @@ function App() {
   const [isTransitionEnabled, setIsTransitionEnabled] = useState(true)
   const [isSiteSearchOpen, setIsSiteSearchOpen] = useState(false)
   const [siteSearchQuery, setSiteSearchQuery] = useState('')
+  const [cartNotice, setCartNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [showBackToTop, setShowBackToTop] = useState(false)
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
+  const cartNoticeTimeoutRef = useRef<number | null>(null)
+  const confirmationResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
+  const confirmationCancelRef = useRef<HTMLButtonElement>(null)
+  const aboutHighlightTimeoutRef = useRef<number | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const siteSearchInputRef = useRef<HTMLInputElement>(null)
   const navigate = useNavigate()
@@ -66,6 +80,15 @@ function App() {
   }
 
   async function updateCartQuantity(productId: number, quantity: number) {
+    if (quantity < 1) {
+      const item = cart.items.find((cartItem) => cartItem.product_id === productId)
+      const confirmed = await requestConfirmation({
+        title: 'Remove item from cart?',
+        message: item?.name ?? 'This item will be removed from your cart.',
+        confirmLabel: 'Remove item',
+      })
+      if (!confirmed) return
+    }
     const response = quantity < 1
       ? await fetch(`/api/cart/items/${productId}`, { method: 'DELETE' })
       : await fetch(`/api/cart/items/${productId}`, {
@@ -79,6 +102,37 @@ function App() {
     else await fetchCart()
   }
 
+  function requestConfirmation(request: ConfirmationRequest) {
+    return new Promise<boolean>((resolve) => {
+      confirmationResolverRef.current?.(false)
+      confirmationResolverRef.current = resolve
+      setConfirmation(request)
+    })
+  }
+
+  function finishConfirmation(confirmed: boolean) {
+    const resolve = confirmationResolverRef.current
+    confirmationResolverRef.current = null
+    setConfirmation(null)
+    resolve?.(confirmed)
+  }
+
+  async function confirmSignOut() {
+    const confirmed = await requestConfirmation({
+      title: 'Sign out?',
+      message: 'Are you sure you want to sign out of your account?',
+      confirmLabel: 'Sign out',
+    })
+    if (!confirmed) return
+
+    const response = await fetch('/api/auth/logout', { method: 'POST' })
+    if (!response.ok) throw new Error('We could not sign you out. Please try again.')
+
+    setActivePreview(null)
+    window.dispatchEvent(new Event('cart-updated'))
+    navigate('/login')
+  }
+
   useEffect(() => {
     void fetchCart()
     const refreshCart = () => { void fetchCart() }
@@ -86,14 +140,55 @@ function App() {
     return () => window.removeEventListener('cart-updated', refreshCart)
   }, [])
 
-  // Rotate search suggestions every second
   useEffect(() => {
-    const interval = setInterval(() => {
+    const updateScrollState = () => setShowBackToTop(window.scrollY > 360)
+    updateScrollState()
+    window.addEventListener('scroll', updateScrollState, { passive: true })
+    return () => window.removeEventListener('scroll', updateScrollState)
+  }, [])
+
+  useEffect(() => () => {
+    if (cartNoticeTimeoutRef.current !== null) window.clearTimeout(cartNoticeTimeoutRef.current)
+    if (aboutHighlightTimeoutRef.current !== null) window.clearTimeout(aboutHighlightTimeoutRef.current)
+  }, [])
+
+  function showCartNotice(message: string, type: 'success' | 'error' = 'success') {
+    if (cartNoticeTimeoutRef.current !== null) window.clearTimeout(cartNoticeTimeoutRef.current)
+    setCartNotice({ message, type })
+    cartNoticeTimeoutRef.current = window.setTimeout(() => setCartNotice(null), 2600)
+  }
+
+  function handleAboutClick(event: ReactMouseEvent<HTMLAnchorElement>) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return
+    event.preventDefault()
+    const footer = document.getElementById('about')
+    if (!footer) return
+
+    const footerBounds = footer.getBoundingClientRect()
+    const stickyHeaderBottom = document.querySelector('.header')?.getBoundingClientRect().bottom ?? 0
+    const footerIsVisible = footerBounds.bottom > stickyHeaderBottom && footerBounds.top < window.innerHeight
+    if (!footerIsVisible) footer.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+    footer.classList.remove('about-highlight')
+    void footer.offsetWidth
+    footer.classList.add('about-highlight')
+    if (aboutHighlightTimeoutRef.current !== null) window.clearTimeout(aboutHighlightTimeoutRef.current)
+    aboutHighlightTimeoutRef.current = window.setTimeout(() => footer.classList.remove('about-highlight'), 1300)
+  }
+
+  // Rotate suggestions only while the catalog route is mounted.
+  useEffect(() => {
+    if (location.pathname !== '/') return
+
+    setSuggestionIndex(0)
+    setIsTransitionEnabled(true)
+
+    const interval = window.setInterval(() => {
       setSuggestionIndex((current) => current + 1)
     }, 1000)
 
-    return () => clearInterval(interval)
-  }, [])
+    return () => window.clearInterval(interval)
+  }, [location.pathname])
 
   // Restore transition after seamless reset
   useEffect(() => {
@@ -111,6 +206,16 @@ function App() {
   }, [isSiteSearchOpen])
 
   useEffect(() => {
+    if (!confirmation) return
+    confirmationCancelRef.current?.focus()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') finishConfirmation(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [confirmation])
+
+  useEffect(() => {
     if (!activePreview) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setActivePreview(null)
@@ -125,8 +230,8 @@ function App() {
   }
 
   const siteSections = [
-    { title: 'Shop', detail: 'Browse the homepage and featured products', to: '/#home' },
     { title: 'Catalog', detail: 'Browse and search all products', to: '/#catalog' },
+    { title: 'About', detail: 'Project goals, author and social links', to: '/#about' },
     { title: 'Cart', detail: 'Review items in your shopping cart', to: '/cart' },
     { title: 'Account', detail: 'Sign in or manage your account', to: '/account' },
   ]
@@ -151,8 +256,8 @@ function App() {
           </Link>
 
           <nav className="primary-nav" aria-label="Main navigation">
-            <Link to="/#home">Shop</Link>
             <Link to="/#catalog">Catalog</Link>
+            <Link to="/#about" onClick={handleAboutClick}>About</Link>
           </nav>
 
           <nav className="header-actions">
@@ -227,7 +332,10 @@ function App() {
             <div className="site-search-results">
               <p className="site-search-section-label">{siteSearchQuery ? 'Pages' : 'Explore'}</p>
               {matchingSections.map((section) => (
-                <Link key={section.title} to={section.to} onClick={closeSiteSearch} className="site-search-result">
+                <Link key={section.title} to={section.to} onClick={(event) => {
+                  closeSiteSearch()
+                  if (section.title === 'About') handleAboutClick(event)
+                }} className="site-search-result">
                   <span className="site-search-result-icon" aria-hidden="true">{section.title === 'Cart' ? '▱' : section.title === 'Account' ? '○' : '⌕'}</span>
                   <span><strong>{section.title}</strong><small>{section.detail}</small></span>
                   <span className="site-search-arrow">↗</span>
@@ -254,7 +362,7 @@ function App() {
             {activePreview === 'cart' ? (
               <CartPreview cart={cart} isLoading={isCartLoading} onClose={() => setActivePreview(null)} onUpdateQuantity={updateCartQuantity} />
             ) : (
-              <AccountPreview onClose={() => setActivePreview(null)} />
+              <AccountPreview onClose={() => setActivePreview(null)} onSignOut={confirmSignOut} />
             )}
           </div>
         </>
@@ -266,6 +374,8 @@ function App() {
           element={
             <CatalogPage
               searchQuery={searchQuery}
+              onCartNotice={showCartNotice}
+              confirmAction={requestConfirmation}
               searchBar={
                 <div
                   className={`header-search ${isSearchFocused ? 'focused' : ''}`}
@@ -331,11 +441,57 @@ function App() {
             />
           }
         />
-        <Route path="/cart" element={<CartPage />} />
+        <Route path="/cart" element={<CartPage confirmAction={requestConfirmation} />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<LoginPage />} />
-        <Route path="/account" element={<AccountPage />} />
+        <Route path="/account" element={<AccountPage onSignOut={confirmSignOut} />} />
       </Routes>
+
+      <footer className="shop-footer" id="about">
+        <div className="footer-about">
+          <strong>QA Practice Shop</strong>
+          <p>A learning project for practicing quality assurance on a real-world style online store.</p>
+        </div>
+        <div className="footer-focus">
+          <span>Practice areas</span>
+          <p>UI testing · REST API · SQL · Responsive testing · Automation</p>
+        </div>
+        <div className="footer-links">
+          <span>Project &amp; author</span>
+          <a href="https://github.com/latvalerian/qa-practice-shop" target="_blank" rel="noreferrer">
+            GitHub <span aria-hidden="true">↗</span>
+          </a>
+          <a href="https://www.linkedin.com/in/valerian-latypov-8a3124448" target="_blank" rel="noreferrer">
+            LinkedIn <span aria-hidden="true">↗</span>
+          </a>
+          <a href="https://www.instagram.com/lat.valerian/" target="_blank" rel="noreferrer">
+            Instagram <span aria-hidden="true">↗</span>
+          </a>
+          <a href="https://t.me/nbrthndth" target="_blank" rel="noreferrer">
+            Telegram <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </footer>
+
+      {cartNotice && <div className={`cart-toast ${cartNotice.type}`} role={cartNotice.type === 'error' ? 'alert' : 'status'}>{cartNotice.message}</div>}
+      {confirmation && (
+        <div className="site-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) finishConfirmation(false) }}>
+          <section className="site-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="site-confirm-title" aria-describedby="site-confirm-message">
+            <span className="site-confirm-mark" aria-hidden="true">?</span>
+            <h2 id="site-confirm-title">{confirmation.title}</h2>
+            <p id="site-confirm-message">{confirmation.message}</p>
+            <div className="site-confirm-actions">
+              <button type="button" className="site-confirm-cancel" ref={confirmationCancelRef} onClick={() => finishConfirmation(false)}>Cancel</button>
+              <button type="button" className="site-confirm-accept" onClick={() => finishConfirmation(true)}>{confirmation.confirmLabel}</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {showBackToTop && (
+        <button type="button" className="back-to-top" aria-label="Back to top" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6" /></svg>
+        </button>
+      )}
     </div>
   )
 }

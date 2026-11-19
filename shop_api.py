@@ -140,6 +140,7 @@ class Checkout(BaseModel):
     recipient_phone: str = Field(min_length=3, max_length=40)
     shipping_address: str = Field(min_length=5, max_length=1000)
     idempotency_key: str = Field(min_length=8, max_length=200)
+    product_ids: list[int] | None = Field(default=None, min_length=1)
 
 
 def _merge_guest_cart(db, user_id: int, request: Request):
@@ -485,6 +486,14 @@ def checkout(body: Checkout, request: Request, authorization: str | None = Heade
                        WHERE ci.cart_id=%s ORDER BY ci.product_id''', (cart[0],))
         raw_items = cur.fetchall()
         if not raw_items: raise HTTPException(400, 'Cart is empty')
+        if body.product_ids is not None:
+            if len(body.product_ids) != len(set(body.product_ids)):
+                raise HTTPException(400, 'Selected products must be unique')
+            cart_product_ids = {item[0] for item in raw_items}
+            if not set(body.product_ids).issubset(cart_product_ids):
+                raise HTTPException(409, 'Cart changed; refresh and retry checkout')
+            selected_product_ids = set(body.product_ids)
+            raw_items = [item for item in raw_items if item[0] in selected_product_ids]
         if any(r[2] is None or not r[5] for r in raw_items):
             raise HTTPException(409, 'Cart contains an unavailable product; remove it before checkout')
         product_ids = [r[0] for r in raw_items]
@@ -511,7 +520,7 @@ def checkout(body: Checkout, request: Request, authorization: str | None = Heade
             cur.execute('INSERT INTO order_items(order_id,product_id,product_name,unit_price_cents,quantity,line_total_cents) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id', (order[0],product_id,name,price,quantity,price*quantity))
             item_id=cur.fetchone()[0]
             cur.execute("INSERT INTO stock_reservations(order_item_id,product_id,quantity,expires_at) VALUES (%s,%s,%s,NOW()+INTERVAL '15 minutes')", (item_id,product_id,quantity))
-        cur.execute('DELETE FROM cart_items WHERE cart_id=%s', (cart[0],))
+        cur.execute('DELETE FROM cart_items WHERE cart_id=%s AND product_id=ANY(%s)', (cart[0],product_ids))
     return dict(id=order[0],status=order[1],total_cents=order[2],currency=order[3],reservation_expires_at=order[4])
 @router.get('/orders')
 def list_orders(request: Request, authorization:str|None=Header(default=None),db=Depends(get_db)):

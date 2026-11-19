@@ -4,12 +4,14 @@ import type { AccountUser, OrderSummary } from '../types'
 
 interface AccountPreviewProps {
   onClose: () => void
+  onSignOut: () => Promise<void>
 }
 
-function AccountPreview({ onClose }: AccountPreviewProps) {
+function AccountPreview({ onClose, onSignOut }: AccountPreviewProps) {
   const [user, setUser] = useState<AccountUser | null>(null)
   const [recentOrder, setRecentOrder] = useState<OrderSummary | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSigningOut, setIsSigningOut] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -43,6 +45,17 @@ function AccountPreview({ onClose }: AccountPreviewProps) {
     return () => { cancelled = true }
   }, [])
 
+  async function handleSignOut() {
+    setIsSigningOut(true)
+    try {
+      await onSignOut()
+    } catch (signOutError) {
+      setError(signOutError instanceof Error ? signOutError.message : 'Could not sign you out.')
+    } finally {
+      setIsSigningOut(false)
+    }
+  }
+
   return (
     <section className="quick-panel account-preview" aria-label="Account preview">
       <div className="quick-panel-heading">
@@ -64,7 +77,9 @@ function AccountPreview({ onClose }: AccountPreviewProps) {
             <Link to="/account#security" onClick={onClose}>Security &amp; password <span>›</span></Link>
           </div>
           {recentOrder && <p className="recent-order-note">Recent order · #{recentOrder.id}</p>}
-          <Link className="preview-primary" to="/account" onClick={onClose}>Open full account</Link>
+          <button className="preview-signout" type="button" onClick={() => void handleSignOut()} disabled={isSigningOut}>
+            {isSigningOut ? 'Signing out…' : 'Sign out'}
+          </button>
         </>
       ) : (
         <div className="account-preview-guest">

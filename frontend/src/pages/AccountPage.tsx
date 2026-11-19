@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import type { AccountUser, OrderSummary } from '../types'
 
 type SettingsTab = 'profile' | 'payments' | 'security'
+interface AccountPageProps {
+  onSignOut: () => Promise<void>
+}
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`
 const displayDate = (value: string) => new Date(value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 
-function AccountPage() {
+function AccountPage({ onSignOut }: AccountPageProps) {
   const [user, setUser] = useState<AccountUser | null>(null)
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -23,7 +26,6 @@ function AccountPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [securityMessage, setSecurityMessage] = useState('')
   const [isChangingPassword, setIsChangingPassword] = useState(false)
-  const navigate = useNavigate()
 
   async function loadAccount() {
     setIsLoading(true)
@@ -120,10 +122,7 @@ function AccountPage() {
 
   async function logout() {
     try {
-      const response = await fetch('/api/auth/logout', { method: 'POST' })
-      if (!response.ok) throw new Error('We could not sign you out. Please try again.')
-      window.dispatchEvent(new Event('cart-updated'))
-      navigate('/login')
+      await onSignOut()
     } catch (logoutError) {
       setMessage(logoutError instanceof Error ? logoutError.message : 'We could not sign you out.')
     }

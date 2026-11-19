@@ -66,7 +66,6 @@ function CartPreview({ cart, isLoading, onClose, onUpdateQuantity }: CartPreview
           </div>
           <div className="preview-subtotal"><span>Subtotal</span><strong>{money(cart.total_cents)}</strong></div>
           <Link className="preview-primary" to="/cart" onClick={onClose}>Checkout</Link>
-          <Link className="preview-secondary" to="/cart" onClick={onClose}>View full cart</Link>
         </>
       )}
 
